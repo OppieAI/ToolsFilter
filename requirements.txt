@@ -1,0 +1,46 @@
+# Core API Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.7.4
+pydantic-settings==2.4.0
+
+# Embedding Service
+litellm==1.75.0
+
+# Vector Database
+qdrant-client==1.15.0
+
+# Cache
+redis==5.0.1
+hiredis==2.3.2
+
+# Evaluation
+# Pin langchain versions to avoid dependency resolution issues
+langchain==0.3.27
+langchain-core==0.3.72
+langchain-community==0.3.27
+langchain-text-splitters==0.3.9
+langsmith==0.4.10
+ragas==0.3.0
+arize-phoenix==11.24.1
+mlflow==3.1.4
+
+# Testing
+pytest==7.4.4
+pytest-asyncio==0.23.3
+httpx==0.26.0
+pytest-cov==4.1.0
+
+# Development Tools
+ruff==0.1.11
+mypy==1.8.0
+black==23.12.1
+
+# Utilities
+python-dotenv==1.0.0
+python-multipart==0.0.6
+numpy==1.26.4
+tenacity==8.2.3
+
+# Performance Testing
+locust==2.20.0

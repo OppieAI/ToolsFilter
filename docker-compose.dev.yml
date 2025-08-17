@@ -1,0 +1,34 @@
+# Development overrides for docker-compose.yml
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - DEV_MODE=true
+    environment:
+      - API_ENV=development
+      - LOG_LEVEL=DEBUG
+    volumes:
+      # Mount source code for hot reloading
+      - ./src:/app/src
+      - ./tests:/app/tests
+      # Prevent overwriting installed packages
+      - /app/.venv
+    command: ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    networks:
+      - ptr-network
+
+  # Development-only services
+  adminer:
+    image: adminer
+    container_name: ptr_adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      - qdrant
+    networks:
+      - ptr-network

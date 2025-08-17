@@ -1,0 +1,55 @@
+# Git
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+env/
+ENV/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Environment
+.env
+.env.local
+
+# Documentation
+documentation/
+*.md
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Data volumes
+qdrant_storage/
+redis_data/
+redisinsight/
+
+# Logs and databases
+*.log
+logs/
+*.db
+*.sqlite
+
+# MLflow
+mlruns/
+
+# OS
+.DS_Store
+Thumbs.db
+toolbench_data/
+
+# Tests (optional, include if you want to run tests in container)
+# tests/
