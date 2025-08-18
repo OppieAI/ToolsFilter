@@ -51,12 +51,12 @@ class ToolBundleAcquisition:
     def __init__(self):
         self.usage_history = []  # Store (query, tools_used, outcome)
         self.tool_bundles = {}   # Learned tool combinations
-    
+
     def learn_bundles(self, min_support=0.1):
         # Mine frequent itemsets from usage history
         # Identify successful tool combinations
         pass
-    
+
     def get_candidate_bundles(self, query):
         # Return historically successful bundles for similar queries
         pass
@@ -77,11 +77,11 @@ class FunctionalCoverageMapper:
     def decompose_query(self, query: str) -> List[FunctionalRequirement]:
         # Break query into atomic functional needs
         pass
-    
+
     def map_requirements_to_tools(self, requirements, available_tools):
         # Create requirement-tool mapping matrix
         pass
-    
+
     def analyze_coverage_gaps(self, mapping):
         # Identify unfulfilled requirements
         pass
@@ -117,16 +117,16 @@ class MultiViewRanker:
 def calculate_tracc(recommended_tools, ground_truth_tools, query_requirements):
     # Functional coverage score
     coverage = calculate_requirement_coverage(recommended_tools, query_requirements)
-    
+
     # Redundancy penalty
     redundancy = detect_redundant_tools(recommended_tools)
-    
+
     # Missing tool penalty
     missing = identify_missing_essential_tools(ground_truth_tools, recommended_tools)
-    
+
     # Interdependency score
     synergy = evaluate_tool_synergy(recommended_tools)
-    
+
     return combine_tracc_components(coverage, redundancy, missing, synergy)
 ```
 
@@ -168,17 +168,17 @@ class QueryDecomposer:
     def __init__(self, llm_model="gpt-4"):
         self.llm = llm_model
         self.requirement_extractor = RequirementExtractor()
-    
+
     def decompose(self, query: str) -> QueryDecomposition:
         # Use LLM to break down query
         components = self.llm.extract_components(query)
-        
+
         # Identify functional requirements
         requirements = self.requirement_extractor.extract(components)
-        
+
         # Determine operation sequence
         sequence = self.determine_operation_flow(requirements)
-        
+
         return QueryDecomposition(
             components=components,
             requirements=requirements,
@@ -199,16 +199,16 @@ class ToolRelationshipGraph:
             'prerequisites': {},   # Tools that require other tools
             'conflicts': {}        # Tools that shouldn't be used together
         }
-    
+
     def add_relationship(self, tool1, tool2, relationship_type, strength):
-        self.graph.add_edge(tool1, tool2, 
-                          type=relationship_type, 
+        self.graph.add_edge(tool1, tool2,
+                          type=relationship_type,
                           weight=strength)
-    
+
     def find_complementary_tools(self, tool):
         # Return tools that enhance this tool's functionality
         pass
-    
+
     def detect_redundancy(self, tool_set):
         # Identify functionally duplicate tools
         pass
@@ -308,3 +308,32 @@ Evolving from our current semantic search to full PTR implementation requires si
 4. **Tool relationships** - Understanding how tools work together
 
 This roadmap provides a path to incrementally build these capabilities while maintaining system stability and performance.
+
+
+## Problems that I forsee
+What are we solving?
+- Recommend tools that will help assist the assistant and reach the solution faster.
+
+Context (In the practical world):
+User is having a conversation with the assistant (LLMs) and given the conversation and all the tools (MCP tools) that the user has enabled, we only want to filter or recommend the tools that will actually help the assistant solve the problem.
+
+1. The tools (aka user tools or available tools) they have enabled is a subset of total tools (could be in 10000s), but we can only recommend tools that the user has enabled.
+2. Our system will recommend tools out of the user tools, after each time the user puts in a query. We are trying to help the assistant by recommending tools that might be useful, and filter out noise.
+3. Once we have recommended the tools: The only way we know the tool/s we recommended is/are helpful or useful is when the assistant uses it. If the tool doesn't get used, this doesn't mean what we recommended was wrong, it could be possible that assistant chooses to not use it. We definitely know the tool/s that were used by the assistants were helpful.
+4. In short, The assistant can choose zero or more tools out of the recommended ones.
+
+What all data we have or will have?
+1. The conversation that is going on between the user and the assistant
+2. The Tools has a defined signature, like name, description, required parameters, optional parameters.
+3. Post recommendation, if the assistant uses the tools we will have data for that (which tool/s was used, etc).
+
+Questions
+1. How to solve this problem at scale? I would only like to use battle tested and well documented methods.
+2. What happens if a tool is newly introduced? For our application we have a dynamic set of tools, new tools can be introduced during run time?
+3. Won't the system favor old tools vs new tools, just because they have more data.
+4. How do we maintain or pre-calculate this? given our tools can be in 10000s
+
+think hard and wisely before answering my question.
+
+4. I will question the rational of the logic (co-occurrence etc) as well, The only way we will if a tool is useful is if the LLM uses our recommendation but it could very well be that it was not applicable as well. Do we know how this kind of problem is solved in data science?
+5. If we forget the PTR paper, how is think kind of problem solved in the industry? what is it called?

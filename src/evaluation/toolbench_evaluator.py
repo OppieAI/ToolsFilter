@@ -11,6 +11,7 @@ from typing import List, Dict, Any, Tuple
 from datetime import datetime
 
 from src.core.models import Tool, ToolFilterRequest, ChatMessage, ToolFunction
+from src.services.embedding_enhancer import ToolEmbeddingEnhancer
 from src.services.vector_store import VectorStoreService
 from src.services.embeddings import EmbeddingService
 from src.core.config import get_settings
@@ -154,10 +155,11 @@ class ToolBenchEvaluator:
 
         # Generate embeddings for tools
         tool_texts = []
+        enhancer = ToolEmbeddingEnhancer()
         for tool in tools:
             # Combine function name and description for embedding
             func = tool.function
-            text = f"{func.name}: {func.description}"
+            text = enhancer.tool_to_rich_text(tool)
             tool_texts.append(text)
 
         # Batch generate embeddings

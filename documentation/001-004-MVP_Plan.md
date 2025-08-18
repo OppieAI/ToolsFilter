@@ -49,43 +49,43 @@ Orchestration: Kubernetes (Phase 2)
 ```
 
 ### MVP Features (Week 1)
-- [] Parse Claude/OpenAI message formats
-- [] Generate embeddings via LiteLLM
-- [] Store and search embeddings in Qdrant
-- [] Return top-K tools based on similarity
-- [] Single REST endpoint with OpenAPI docs
-- [] Basic evaluation with RAGAS
+- [x] Parse Claude/OpenAI message formats
+- [x] Generate embeddings via LiteLLM
+- [x] Store and search embeddings in Qdrant
+- [x] Return top-K tools based on similarity
+- [x] Single REST endpoint with OpenAPI docs
+- [x] Basic evaluation with RAGAS
 
 ## 🚀 MVP Implementation Tasks (Week 1)
 
 ### Day 1-2: Project Setup
-- [ ] Create GitHub repository
-- [ ] Set up project structure as per MVP plan
-- [ ] Create requirements.txt with dependencies
-- [ ] Set up Docker Compose with Qdrant and Redis
-- [ ] Create .env.example with required keys
-- [ ] Initialize FastAPI application
+- [x] Create GitHub repository
+- [x] Set up project structure as per MVP plan
+- [x] Create requirements.txt with dependencies
+- [x] Set up Docker Compose with Qdrant and Redis
+- [x] Create .env.example with required keys
+- [x] Initialize FastAPI application
 
 ### Day 3-4: Core Services
-- [ ] Implement LiteLLM embedding service wrapper
-- [ ] Create Qdrant client and collections
-- [ ] Implement Redis caching layer
-- [ ] Build message parsers (Claude/OpenAI formats)
-- [ ] Create tool registry loader for MCP tools
+- [x] Implement LiteLLM embedding service wrapper
+- [x] Create Qdrant client and collections
+- [x] Implement Redis caching layer
+- [x] Build message parsers (Claude/OpenAI formats)
+- [x] Create tool registry loader for MCP tools
 
 ### Day 5-6: API & Evaluation
-- [ ] Implement `/api/v1/tools/filter` endpoint
-- [ ] Add request/response validation with Pydantic
-- [ ] Create sample tool dataset for testing
-- [ ] Integrate RAGAS for basic evaluation
-- [ ] Write initial test suite with pytest
+- [x] Implement `/api/v1/tools/filter` endpoint
+- [x] Add request/response validation with Pydantic
+- [x] Create sample tool dataset for testing
+- [x] Integrate RAGAS for basic evaluation
+- [x] Write initial test suite with pytest
 
 ### Day 7: Documentation & Testing
-- [ ] Generate OpenAPI documentation
-- [ ] Create README with setup instructions
-- [ ] Run load tests to verify <100ms latency
-- [ ] Create sample client code
-- [ ] Deploy MVP with Docker Compose
+- [x] Generate OpenAPI documentation
+- [x] Create README with setup instructions
+- [x] Run load tests to verify <100ms latency
+- [x] Create sample client code
+- [x] Deploy MVP with Docker Compose
 
 
 ### Project Structure

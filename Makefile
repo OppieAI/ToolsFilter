@@ -33,7 +33,7 @@ restart-api:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml restart api
 
 flush-redis:
-	docker-compose exec redis redis-cli FLUSHALL
+	docker exec ptr_redis redis-cli FLUSHALL
 
 # Stop all services
 down:

@@ -18,6 +18,7 @@ from src.core.models import (
 from src.services.embeddings import EmbeddingService
 from src.services.vector_store import VectorStoreService
 from src.services.message_parser import MessageParser
+from src.services.embedding_enhancer import ToolEmbeddingEnhancer
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -405,13 +406,9 @@ async def list_collections(
 
 
 def _tool_to_text(tool: Dict[str, Any]) -> str:
-    """Convert tool to text for embedding."""
-    if tool.get("type") == "function":
-        function = tool.get("function", {})
-        name = function.get("name", "")
-        description = function.get("description", "")
-        return f"{name}: {description}"
-    return str(tool)
+    """Convert tool to text for embedding using enhanced representation."""
+    enhancer = ToolEmbeddingEnhancer()
+    return enhancer.tool_to_rich_text(tool)
 
 
 def _generate_reasoning(
