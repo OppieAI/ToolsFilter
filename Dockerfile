@@ -28,7 +28,10 @@ COPY .env.example .env
 
 # Create non-root user
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+
+# Download required NLTK data to user's home directory
 USER appuser
+RUN python -c "import nltk; nltk.download('punkt', download_dir='/home/appuser/nltk_data'); nltk.download('stopwords', download_dir='/home/appuser/nltk_data')"
 
 # Expose port
 EXPOSE 8000

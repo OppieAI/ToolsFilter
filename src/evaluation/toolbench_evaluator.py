@@ -6,16 +6,26 @@ Uses test.json and train.json from toolbench_data/data/retrieval/G1/
 import json
 import asyncio
 import time
+import logging
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
 from datetime import datetime
 
 from src.core.models import Tool, ToolFilterRequest, ChatMessage, ToolFunction
 from src.services.embedding_enhancer import ToolEmbeddingEnhancer
+from src.services.query_enhancer import QueryEnhancer
 from src.services.vector_store import VectorStoreService
 from src.services.embeddings import EmbeddingService
 from src.core.config import get_settings
 from src.evaluation.threshold_optimizer import ThresholdOptimizer
+from slugify import slugify
+
+# Configure logging to show DEBUG messages
+logging.basicConfig(
+    level=logging.INFO,  # Set to DEBUG to see all debug messages
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 
 class ToolBenchEvaluator:
@@ -24,6 +34,9 @@ class ToolBenchEvaluator:
     def __init__(self, data_path: str = "toolbench_data/data/retrieval/G1"):
         self.data_path = Path(data_path)
         self.settings = get_settings()
+        # Cache for noise tools to avoid reloading
+        self._cached_noise_tools = None
+        self._cached_noise_embeddings = None
 
     def convert_api_to_openai_format(self, api: Dict[str, Any]) -> Tool:
         """
@@ -94,7 +107,10 @@ class ToolBenchEvaluator:
         # Create function name combining tool and API name
         tool_name = api.get("tool_name", "Unknown")
         api_name = api.get("api_name", "Unknown")
-        function_name = f"{tool_name}_{api_name}".replace(" ", "_").replace("-", "_")
+        # Create the raw function name first
+        raw_function_name = f"{tool_name}_{api_name}"
+        # Normalize it using slugify to handle special characters consistently
+        function_name = slugify(raw_function_name, separator="_")
 
         # Create the Tool object
 
@@ -175,12 +191,47 @@ class ToolBenchEvaluator:
         print(f"  First tool: {tools[0].function.name if tools else 'None'}")
         print(f"  Embedding dimension: {len(embeddings[0]) if embeddings else 0}")
 
+        # Debug: Print the actual tool names being indexed
+        indexed_names = [tool.function.name for tool in tools]
+        print(f"  Tool names being indexed: {indexed_names}")
+
         await vector_store.index_tools_batch(tool_dicts, embeddings)
 
         # Verify indexing by checking collection info
         try:
             collection_info = vector_store.client.get_collection(vector_store.collection_name)
             print(f"  Collection '{vector_store.collection_name}' has {collection_info.points_count} points")
+
+            # Optimize collection if it's large enough
+            if collection_info.points_count > self.settings.two_stage_threshold:
+                print(f"  Optimizing collection for {collection_info.points_count} tools...")
+                await vector_store.optimize_collection(target_mode="balanced")
+
+            # Debug: Verify the tools are searchable by doing a test query
+            if tools:
+                test_tool_name = tools[0].function.name
+                print(f"  Verifying tool '{test_tool_name}' is searchable...")
+
+                # Try to retrieve the specific tool
+                from qdrant_client.models import Filter, FieldCondition, MatchValue
+                test_filter = Filter(must=[
+                    FieldCondition(
+                        key="name",
+                        match=MatchValue(value=test_tool_name)
+                    )
+                ])
+
+                test_results = vector_store.client.scroll(
+                    collection_name=vector_store.collection_name,
+                    scroll_filter=test_filter,
+                    limit=1
+                )
+
+                if test_results[0]:
+                    print(f"    ✓ Tool found in collection")
+                else:
+                    print(f"    ✗ Tool NOT found in collection - indexing may have failed")
+
         except Exception as e:
             print(f"  Error checking collection: {e}")
 
@@ -203,14 +254,16 @@ class ToolBenchEvaluator:
         Returns:
             Evaluation metrics
         """
-        # Create expected set from relevant APIs
+        # Create expected set from relevant APIs (normalized using slugify)
         expected_set = set()
         for api_ref in expected_apis:
             if len(api_ref) >= 2:
                 tool_name = api_ref[0]
                 api_name = api_ref[1]
-                expected_name = f"{tool_name}_{api_name}".replace(" ", "_").replace("-", "_")
-                expected_set.add(expected_name.lower())
+                raw_name = f"{tool_name}_{api_name}"
+                # Use slugify to normalize the same way as when creating tools
+                expected_name = slugify(raw_name, separator="_")
+                expected_set.add(expected_name)
 
         # Extract recommended tool names
         recommended_set = set()
@@ -228,7 +281,8 @@ class ToolBenchEvaluator:
                         tool_name = func.name if hasattr(func, 'name') else ""
 
             if tool_name:
-                recommended_set.add(tool_name.lower())
+                # No need to lowercase since slugify already does that
+                recommended_set.add(tool_name)
 
         # Calculate metrics
         if not expected_set:
@@ -295,35 +349,84 @@ class ToolBenchEvaluator:
             max_tools=10
         )
 
-        # Get embedding for the query
-        start_time = time.time()
-        query_embedding = await embedding_service.embed_conversation(request.messages)
-        embed_time = time.time() - start_time
-
         # Extract tool names for filtering (only search within indexed tools for this test case)
         available_tool_names = []
         for tool in tools:
             available_tool_names.append(tool.function.name)
 
-        # Search for similar tools
+        print(f"  Available tool names for filter: {available_tool_names}")
+
+        # Check search configuration
+        use_query_enhancement = getattr(self.settings, 'enable_query_enhancement', True)
+        use_hybrid_search = getattr(self.settings, 'enable_hybrid_search', True)
+
         start_time = time.time()
 
-        # Debug: Check collection before searching
-        try:
-            collection_info = vector_store.client.get_collection(vector_store.collection_name)
-            print(f"  Before search: Collection has {collection_info.points_count} points")
-        except Exception as e:
-            print(f"  Error checking collection before search: {e}")
+        if use_hybrid_search:
+            # Hybrid search (semantic + BM25)
+            print(f"  Using hybrid search (semantic + BM25)")
 
-        # First search without threshold to see scores
-        all_results = await vector_store.search_similar_tools(
-            query_embedding=query_embedding,
-            limit=100,  # High limit to ensure we get all available tools
-            score_threshold=0.0,  # No threshold to see all scores
-            filter_dict={"name": available_tool_names}  # Only search within tools for this test case
-        )
+            # Generate embedding for semantic component
+            query_embedding = await embedding_service.embed_conversation(request.messages)
+            embed_time = time.time() - start_time
 
-        print(f"  Query embedding dim: {len(query_embedding)}")
+            # Perform hybrid search without threshold first to get all scores
+            all_results = await vector_store.hybrid_search(
+                query=query,
+                available_tools=tools,
+                query_embedding=query_embedding,
+                limit=100,
+                method=getattr(self.settings, 'hybrid_search_method', 'weighted'),
+                score_threshold=0.0  # Get all scores for threshold optimization
+            )
+
+        elif use_query_enhancement:
+            # Enhanced multi-query search
+            query_enhancer = QueryEnhancer()
+            enhanced_query = query_enhancer.enhance_query(request.messages, [])
+
+            # Generate embeddings for all query representations
+            query_embeddings = await embedding_service.embed_queries(enhanced_query["queries"])
+            embed_time = time.time() - start_time
+
+            print(f"  Enhanced query with {len(query_embeddings)} representations")
+            print(f"  Query aspects: {list(query_embeddings.keys())}")
+
+            # Debug: Check collection before searching
+            try:
+                collection_info = vector_store.client.get_collection(vector_store.collection_name)
+                print(f"  Before search: Collection has {collection_info.points_count} points")
+            except Exception as e:
+                print(f"  Error checking collection before search: {e}")
+
+            # First search without threshold to see scores using multi-query
+            all_results = await vector_store.search_multi_query(
+                query_embeddings=query_embeddings,
+                weights=enhanced_query["weights"],
+                limit=100,  # High limit to ensure we get all available tools
+                score_threshold=0.0,  # No threshold to see all scores
+                filter_dict={"name": available_tool_names}  # Only search within tools for this test case
+            )
+        else:
+            # Original single-query approach
+            query_embedding = await embedding_service.embed_conversation(request.messages)
+            embed_time = time.time() - start_time
+
+            # Debug: Check collection before searching
+            try:
+                collection_info = vector_store.client.get_collection(vector_store.collection_name)
+                print(f"  Before search: Collection has {collection_info.points_count} points")
+            except Exception as e:
+                print(f"  Error checking collection before search: {e}")
+
+            # First search without threshold to see scores
+            all_results = await vector_store.search_similar_tools(
+                query_embedding=query_embedding,
+                limit=100,  # High limit to ensure we get all available tools
+                score_threshold=0.0,  # No threshold to see all scores
+                filter_dict={"name": available_tool_names}  # Only search within tools for this test case
+            )
+
         print(f"  Available tools: {len(available_tool_names)}")
         print(f"  All results count: {len(all_results)}")
 
@@ -342,12 +445,37 @@ class ToolBenchEvaluator:
 
         # Now search with threshold - use a lower threshold for testing
         test_threshold = self.settings.primary_similarity_threshold  # Lower threshold to get some results
-        recommended = await vector_store.search_similar_tools(
-            query_embedding=query_embedding,
-            limit=request.max_tools,
-            score_threshold=test_threshold,
-            filter_dict={"name": available_tool_names}  # Only search within tools for this test case
-        )
+
+        if use_hybrid_search:
+            # Hybrid search with threshold
+            recommended = await vector_store.hybrid_search(
+                query=query,
+                available_tools=tools,
+                query_embedding=query_embedding,
+                limit=request.max_tools,
+                method=getattr(self.settings, 'hybrid_search_method', 'weighted')
+            )
+            # Filter by threshold (hybrid_search applies threshold internally)
+            recommended = [r for r in recommended if r.get('score', 0) >= test_threshold]
+
+        elif use_query_enhancement:
+            # Enhanced search with threshold
+            recommended = await vector_store.search_multi_query(
+                query_embeddings=query_embeddings,
+                weights=enhanced_query["weights"],
+                limit=request.max_tools,
+                score_threshold=test_threshold,
+                filter_dict={"name": available_tool_names}  # Only search within tools for this test case
+            )
+        else:
+            # Original search with threshold
+            recommended = await vector_store.search_similar_tools(
+                query_embedding=query_embedding,
+                limit=request.max_tools,
+                score_threshold=test_threshold,
+                filter_dict={"name": available_tool_names}  # Only search within tools for this test case
+            )
+
         search_time = time.time() - start_time
 
         print(f"  Found {len(recommended)} recommendations with threshold {test_threshold}")
@@ -379,51 +507,150 @@ class ToolBenchEvaluator:
 
         return metrics
 
+    async def load_random_toolbench_tools(self,
+                                          data_dir: str = "toolbench_data/data/test_instruction",
+                                          target_total: int = 15) -> List[Tool]:
+        """
+        Load a random sample of tools from ToolBench test instruction files.
+
+        Args:
+            data_dir: Directory containing test instruction files
+            target_total: Target number of tools to load (default 15)
+
+        Returns:
+            List of randomly selected Tool objects
+        """
+        import random
+
+        all_tools = []
+        seen_tool_names = set()
+
+        # List of available test files
+        test_files = ["G1_instruction.json", "G2_instruction.json", "G3_instruction.json", "G1_category.json", "G1_tool.json"]
+
+        # Randomize the order of files
+        random.seed(42)  # Fixed seed for reproducibility
+        random.shuffle(test_files)
+
+        for test_file in test_files:
+            if len(all_tools) >= target_total:
+                break
+
+            try:
+                file_path = Path(data_dir) / test_file
+                if not file_path.exists():
+                    print(f"  Skipping {test_file} - file not found")
+                    continue
+
+                print(f"  Loading tools from {test_file}...")
+
+                with open(file_path, 'r') as f:
+                    test_data = json.load(f)
+
+                # Collect all unique tools from this file
+                file_tools = []
+                for test_case in test_data:
+                    api_list = test_case.get("api_list", [])
+
+                    for api in api_list:
+                        try:
+                            tool = self.convert_api_to_openai_format(api)
+                            # Avoid duplicates based on tool name
+                            if tool.function.name not in seen_tool_names:
+                                file_tools.append(tool)
+                                seen_tool_names.add(tool.function.name)
+                        except Exception as e:
+                            # Skip tools that fail to convert
+                            continue
+
+                # Determine how many tools to take from this file
+                remaining_needed = target_total - len(all_tools)
+
+                if len(file_tools) > 0:
+                    # Take between 400-600 tools from each file, or whatever is available/needed
+                    min_from_file = min(400, len(file_tools), remaining_needed)
+                    max_from_file = min(600, len(file_tools), remaining_needed)
+
+                    # Randomly decide how many to take within the range
+                    num_to_take = random.randint(min_from_file, max_from_file)
+
+                    # Randomly sample tools from this file
+                    selected_from_file = random.sample(file_tools, num_to_take)
+                    all_tools.extend(selected_from_file)
+
+                    print(f"    Selected {num_to_take} tools from {len(file_tools)} available in {test_file}")
+                else:
+                    print(f"    No valid tools found in {test_file}")
+
+            except Exception as e:
+                print(f"  Error loading {test_file}: {e}")
+
+        print(f"  Total tools loaded: {len(all_tools)} (target was {target_total})")
+        return all_tools
+
     async def create_sample_noise_tools(
         self,
         vector_store: VectorStoreService,
         embedding_service: EmbeddingService,
-        num_tools: int = 100
+        num_tools: int = 15
     ):
         """
-        Create and index sample 'noise' tools to simulate a realistic environment.
-        In production, there would be thousands of tools in the vector store.
+        Index real ToolBench tools as noise to simulate a realistic environment.
+        Uses cached tools if available to avoid reloading and re-embedding.
+
+        Args:
+            vector_store: Vector store service
+            embedding_service: Embedding service
+            num_tools: Number of noise tools to index (default 15)
         """
-        print(f"Creating {num_tools} sample noise tools...")
+        # Check if we have cached tools
+        if self._cached_noise_tools is None or self._cached_noise_embeddings is None:
+            print(f"Loading and preparing {num_tools} real ToolBench tools as noise...")
 
-        sample_tools = []
-        tool_texts = []
+            # Load random sample of tools directly
+            selected_tools = await self.load_random_toolbench_tools(target_total=num_tools)
 
-        # Create diverse sample tools that shouldn't match typical queries
-        categories = ["Utility", "Admin", "Debug", "Internal", "Legacy", "Testing"]
+            if not selected_tools:
+                print("  WARNING: No tools loaded from ToolBench data, skipping noise tools")
+                return
 
-        for i in range(num_tools):
-            category = categories[i % len(categories)]
-            tool_name = f"Sample_{category}_Tool_{i}"
+            # Generate embeddings for selected tools
+            tool_texts = []
+            enhancer = ToolEmbeddingEnhancer()
 
-            tool = Tool(
-                type="function",
-                function=ToolFunction(
-                    name=tool_name,
-                    description=f"A sample {category.lower()} tool for internal testing. Tool #{i}.",
-                    parameters={
-                        "type": "object",
-                        "properties": {
-                            "param1": {"type": "string", "description": f"Parameter for {tool_name}"}
-                        },
-                        "required": []
-                    }
-                )
-            )
+            for tool in selected_tools:
+                text = enhancer.tool_to_rich_text(tool)
+                tool_texts.append(text)
 
-            sample_tools.append(tool.model_dump())
-            tool_texts.append(f"{tool_name}: A sample {category.lower()} tool for internal testing")
+            print(f"  Generating embeddings for {len(selected_tools)} noise tools...")
+            embeddings = await embedding_service.embed_batch(tool_texts)
 
-        # Index sample tools
-        embeddings = await embedding_service.embed_batch(tool_texts)
-        await vector_store.index_tools_batch(sample_tools, embeddings)
+            # Convert Tool objects to dict format
+            tool_dicts = []
+            for tool in selected_tools:
+                tool_dicts.append(tool.model_dump())
 
-        print(f"  Indexed {num_tools} sample noise tools")
+            # Cache for future use
+            self._cached_noise_tools = tool_dicts
+            self._cached_noise_embeddings = embeddings
+
+            print(f"  Cached {len(tool_dicts)} noise tools with embeddings")
+        else:
+            print(f"  Using cached {len(self._cached_noise_tools)} noise tools")
+
+        # Index the cached tools
+        print(f"  Indexing {len(self._cached_noise_tools)} noise tools...")
+        await vector_store.index_tools_batch(
+            self._cached_noise_tools,
+            self._cached_noise_embeddings
+        )
+
+        # Verify indexing
+        try:
+            collection_info = vector_store.client.get_collection(vector_store.collection_name)
+            print(f"  Collection now has {collection_info.points_count} total tools")
+        except Exception as e:
+            print(f"  Error checking collection: {e}")
 
     async def run_evaluation(
         self,
@@ -467,9 +694,13 @@ class ToolBenchEvaluator:
 
         await vector_store.initialize()
 
+        # Clear cache to ensure consistent results
+        await vector_store.clear_cache()
+        print("Cleared search cache for consistent evaluation")
+
         # Add sample noise tools to simulate realistic environment
         if add_noise_tools:
-            await self.create_sample_noise_tools(vector_store, embedding_service, num_tools=50)
+            await self.create_sample_noise_tools(vector_store, embedding_service, num_tools=15)
 
         # Initialize threshold optimizer
         threshold_optimizer = ThresholdOptimizer()
@@ -490,7 +721,7 @@ class ToolBenchEvaluator:
 
                     # Re-add noise tools after clearing
                     if add_noise_tools:
-                        await self.create_sample_noise_tools(vector_store, embedding_service, num_tools=50)
+                        await self.create_sample_noise_tools(vector_store, embedding_service, num_tools=15)
                 except Exception as e:
                     print(f"  Warning: Could not clear collection: {e}")
 
@@ -549,6 +780,13 @@ class ToolBenchEvaluator:
             }
         }
 
+        # Get performance stats if available
+        try:
+            performance_stats = await vector_store.get_performance_stats()
+            summary["performance"] = performance_stats
+        except:
+            pass
+
         # Print summary
         print("\n" + "="*60)
         print("EVALUATION SUMMARY")
@@ -563,6 +801,22 @@ class ToolBenchEvaluator:
         print(f"\nTiming:")
         print(f"  Average Time per Query: {avg_time:.1f}ms")
         print(f"  Total Time: {total_time/1000:.1f}s")
+
+        # Print performance stats if available
+        if "performance" in summary:
+            perf = summary["performance"]
+            print(f"\nOptimizer Performance:")
+            if "optimizer" in perf and perf["optimizer"]:
+                for op, stats in perf["optimizer"].items():
+                    if isinstance(stats, dict) and "avg_ms" in stats:
+                        print(f"  {op}: avg={stats['avg_ms']:.1f}ms, p95={stats.get('p95_ms', 0):.1f}ms")
+
+            if "cache" in perf and perf["cache"]:
+                cache = perf["cache"]
+                print(f"\nCache Performance:")
+                print(f"  Hit Rate: {cache.get('hit_rate', 0):.1%}")
+                print(f"  Cache Size: {cache.get('size', 0)}/{cache.get('max_size', 0)}")
+                print(f"  Total Hits: {cache.get('hits', 0)}, Misses: {cache.get('misses', 0)}")
 
         # Run threshold optimization analysis
         print("\n" + "="*60)
@@ -594,7 +848,11 @@ class ToolBenchEvaluator:
         print(f"  Accuracy: {consensus_metrics['accuracy']:.3f}")
 
         # Compare with current threshold
-        current_metrics = threshold_optimizer.calculate_metrics_at_threshold(self.settings.primary_similarity_threshold)
+        # Use macro-averaging for accurate comparison with actual system performance
+        current_metrics = threshold_optimizer.calculate_metrics_at_threshold(
+            self.settings.primary_similarity_threshold,
+            use_macro_averaging=True
+        )
         print(f"\nMetrics at Current Threshold ({self.settings.primary_similarity_threshold}):")
         print(f"  Precision: {current_metrics['precision']:.3f}")
         print(f"  Recall: {current_metrics['recall']:.3f}")
@@ -652,7 +910,7 @@ async def main():
     await evaluator.run_evaluation(
         test_file="G2_instruction.json",
         data_dir="toolbench_data/data/test_instruction",
-        num_cases=50,  # Start with 20 cases
+        num_cases=100,  # Start with 20 cases
         clear_collection=True,
         add_noise_tools=True  # Add sample tools for realistic testing
     )

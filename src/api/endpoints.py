@@ -19,6 +19,7 @@ from src.services.embeddings import EmbeddingService
 from src.services.vector_store import VectorStoreService
 from src.services.message_parser import MessageParser
 from src.services.embedding_enhancer import ToolEmbeddingEnhancer
+from src.services.query_enhancer import QueryEnhancer
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -145,28 +146,67 @@ async def filter_tools(
         max_tools = request.max_tools or settings.max_tools_to_return
         model_used = embedding_service.model
         
+        # Check if query enhancement is enabled (default: True)
+        use_query_enhancement = getattr(settings, 'enable_query_enhancement', True)
+        
         try:
-            # Try primary store first
-            conversation_embedding = await embedding_service.embed_conversation(request.messages)
-            similar_tools = await vector_store.search_similar_tools(
-                query_embedding=conversation_embedding,
-                limit=max_tools * 2,  # Get more candidates for filtering
-                score_threshold=settings.primary_similarity_threshold,
-                filter_dict={"name": available_tool_names}  # Only search within available tools
-            )
+            if use_query_enhancement:
+                # Enhanced multi-query search
+                query_enhancer = QueryEnhancer()
+                enhanced_query = query_enhancer.enhance_query(request.messages, used_tools)
+                
+                # Generate embeddings for all query representations
+                query_embeddings = await embedding_service.embed_queries(enhanced_query["queries"])
+                
+                # Search with multiple queries and weighted aggregation
+                similar_tools = await vector_store.search_multi_query(
+                    query_embeddings=query_embeddings,
+                    weights=enhanced_query["weights"],
+                    limit=max_tools * 2,  # Get more candidates for filtering
+                    score_threshold=settings.primary_similarity_threshold,
+                    filter_dict={"name": available_tool_names}  # Only search within available tools
+                )
+                
+                # Store metadata for logging
+                conversation_analysis.update(enhanced_query["metadata"])
+            else:
+                # Original single-query search
+                conversation_embedding = await embedding_service.embed_conversation(request.messages)
+                similar_tools = await vector_store.search_similar_tools(
+                    query_embedding=conversation_embedding,
+                    limit=max_tools * 2,  # Get more candidates for filtering
+                    score_threshold=settings.primary_similarity_threshold,
+                    filter_dict={"name": available_tool_names}  # Only search within available tools
+                )
         except Exception as e:
             logger.warning(f"Primary search failed: {e}")
             
             # Try fallback if available
             if fallback_vector_store and fallback_embedding_service:
                 logger.info("Attempting search with fallback model...")
-                conversation_embedding = await fallback_embedding_service.embed_conversation(request.messages)
-                similar_tools = await fallback_vector_store.search_similar_tools(
-                    query_embedding=conversation_embedding,
-                    limit=max_tools * 2,
-                    score_threshold=settings.fallback_similarity_threshold,
-                    filter_dict={"name": available_tool_names}  # Only search within available tools
-                )
+                
+                if use_query_enhancement:
+                    # Enhanced search with fallback
+                    query_enhancer = QueryEnhancer()
+                    enhanced_query = query_enhancer.enhance_query(request.messages, used_tools)
+                    query_embeddings = await fallback_embedding_service.embed_queries(enhanced_query["queries"])
+                    similar_tools = await fallback_vector_store.search_multi_query(
+                        query_embeddings=query_embeddings,
+                        weights=enhanced_query["weights"],
+                        limit=max_tools * 2,
+                        score_threshold=settings.fallback_similarity_threshold,
+                        filter_dict={"name": available_tool_names}
+                    )
+                    conversation_analysis.update(enhanced_query["metadata"])
+                else:
+                    # Original fallback search
+                    conversation_embedding = await fallback_embedding_service.embed_conversation(request.messages)
+                    similar_tools = await fallback_vector_store.search_similar_tools(
+                        query_embedding=conversation_embedding,
+                        limit=max_tools * 2,
+                        score_threshold=settings.fallback_similarity_threshold,
+                        filter_dict={"name": available_tool_names}
+                    )
                 model_used = fallback_embedding_service.model
             else:
                 raise
@@ -402,6 +442,80 @@ async def list_collections(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to list collections: {str(e)}"
+        )
+
+
+@router.get("/performance")
+async def get_performance_stats(
+    authenticated: bool = Depends(verify_api_key),
+    vector_store: VectorStoreService = Depends(get_vector_store)
+):
+    """Get performance statistics for search optimization and caching."""
+    try:
+        stats = await vector_store.get_performance_stats()
+        return stats
+    except Exception as e:
+        logger.error(f"Failed to get performance stats: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get performance stats: {str(e)}"
+        )
+
+
+@router.post("/cache/clear")
+async def clear_cache(
+    authenticated: bool = Depends(verify_api_key),
+    vector_store: VectorStoreService = Depends(get_vector_store)
+):
+    """Clear the search result cache."""
+    try:
+        await vector_store.clear_cache()
+        return {"status": "success", "message": "Cache cleared successfully"}
+    except Exception as e:
+        logger.error(f"Failed to clear cache: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to clear cache: {str(e)}"
+        )
+
+
+@router.post("/optimize")
+async def optimize_collection(
+    target_mode: str = "balanced",
+    authenticated: bool = Depends(verify_api_key),
+    vector_store: VectorStoreService = Depends(get_vector_store)
+):
+    """
+    Optimize the collection configuration for better performance.
+    
+    Target modes:
+    - "speed": Optimize for fast retrieval
+    - "accuracy": Optimize for high accuracy
+    - "balanced": Balance between speed and accuracy
+    """
+    if target_mode not in ["speed", "accuracy", "balanced"]:
+        raise HTTPException(
+            status_code=400,
+            detail="target_mode must be one of: speed, accuracy, balanced"
+        )
+    
+    try:
+        success = await vector_store.optimize_collection(target_mode)
+        if success:
+            return {
+                "status": "success",
+                "message": f"Collection optimized for {target_mode} mode"
+            }
+        else:
+            return {
+                "status": "failed",
+                "message": "Collection optimization failed"
+            }
+    except Exception as e:
+        logger.error(f"Failed to optimize collection: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to optimize collection: {str(e)}"
         )
 
 

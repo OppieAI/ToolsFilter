@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import asyncio
 from typing import List, Optional, Dict, Any
 from functools import lru_cache
 
@@ -206,6 +207,35 @@ class EmbeddingService:
         
         conversation_text = "\n".join(conversation_parts)
         return await self.embed_text(conversation_text)
+    
+    async def embed_queries(self, queries: Dict[str, str]) -> Dict[str, List[float]]:
+        """
+        Generate embeddings for multiple query representations in parallel.
+        
+        Args:
+            queries: Dictionary of query names to query texts
+            
+        Returns:
+            Dictionary of query names to embedding vectors
+        """
+        if not queries:
+            return {}
+        
+        # Create tasks for parallel embedding
+        tasks = []
+        query_names = []
+        
+        for name, text in queries.items():
+            if text:  # Skip empty queries
+                tasks.append(self.embed_text(text))
+                query_names.append(name)
+        
+        # Execute all embeddings in parallel
+        if tasks:
+            embeddings = await asyncio.gather(*tasks)
+            return dict(zip(query_names, embeddings))
+        
+        return {}
     
     async def embed_tool(self, tool: Dict[str, Any]) -> List[float]:
         """

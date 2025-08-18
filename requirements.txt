@@ -5,6 +5,7 @@ pydantic==2.7.4
 pydantic-settings==2.4.0
 
 # Embedding Service
+openai==1.68.2  # Pin to compatible version with litellm 1.75.0
 litellm==1.75.0
 
 # Vector Database
@@ -42,5 +43,9 @@ python-multipart==0.0.6
 numpy==1.26.4
 tenacity==8.2.3
 
+# Text Processing and BM25
+rank-bm25==0.2.2
+nltk==3.8.1
+python-slugify==8.0.1
 # Performance Testing
 locust==2.20.0

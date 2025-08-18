@@ -81,6 +81,66 @@ class Settings(BaseSettings):
         le=1.0,
         description="Minimum similarity score threshold for fallback model"
     )
+    enable_query_enhancement: bool = Field(
+        default=True,
+        description="Enable multi-query enhancement for better tool matching"
+    )
+    enable_two_stage_search: bool = Field(
+        default=False,
+        description="Enable optimized two-stage search for large collections"
+    )
+    two_stage_threshold: int = Field(
+        default=1000,
+        description="Collection size threshold to trigger two-stage search"
+    )
+    search_cache_size: int = Field(
+        default=1000,
+        description="Maximum number of cached search results"
+    )
+    search_cache_ttl: int = Field(
+        default=300,
+        description="TTL for cached search results in seconds"
+    )
+    
+    # Hybrid Search Configuration
+    enable_hybrid_search: bool = Field(
+        default=True,
+        description="Enable hybrid semantic + BM25 search"
+    )
+    hybrid_search_method: str = Field(
+        default="weighted",
+        description="Hybrid method: 'weighted' or 'rrf'"
+    )
+    semantic_weight: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description="Weight for semantic scores in hybrid search"
+    )
+    bm25_weight: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Weight for BM25 scores in hybrid search"
+    )
+    
+    # BM25 Configuration
+    bm25_variant: str = Field(
+        default="okapi",
+        description="BM25 variant: 'okapi', 'plus', or 'l'"
+    )
+    bm25_k1: float = Field(
+        default=1.5,
+        ge=0.0,
+        le=3.0,
+        description="BM25 term frequency saturation parameter"
+    )
+    bm25_b: float = Field(
+        default=0.75,
+        ge=0.0,
+        le=1.0,
+        description="BM25 length normalization parameter"
+    )
 
     # Security
     api_key_header: str = Field(default="X-API-Key", description="API key header name")
