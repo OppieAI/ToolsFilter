@@ -240,26 +240,58 @@ class VectorStoreService:
             point_ids.append(point_id)
             
             # Extract tool information
+            # Handle both formats: 
+            # 1. Flat format: {type: "function", name: "...", description: "...", parameters: {...}}
+            # 2. Nested format: {type: "function", function: {name: "...", ...}}
             if tool.get("type") == "function":
-                function = tool.get("function", {})
-                name = function.get("name", "unknown")
-                description = function.get("description", "")
-                parameters = function.get("parameters", {})
+                # Check if it's nested format
+                if "function" in tool:
+                    function = tool["function"]
+                    name = function.get("name", "unknown")
+                    description = function.get("description", "")
+                    parameters = function.get("parameters", {})
+                else:
+                    # Flat format (more common)
+                    name = tool.get("name", "unknown")
+                    description = tool.get("description", "")
+                    parameters = tool.get("parameters", {})
             else:
                 name = tool.get("name", "unknown")
                 description = tool.get("description", "")
-                parameters = {}
+                parameters = tool.get("parameters", {})
+            
+            # Enhanced payload with more searchable fields
+            param_props = parameters.get("properties", {}) if parameters else {}
+            param_names = list(param_props.keys()) if param_props else []
+            required_params = parameters.get("required", []) if parameters else []
+            
+            # Tokenize for better text search
+            name_tokens = name.lower().replace("_", " ").replace("-", " ").split()
+            desc_tokens = description.lower().split() if description else []
             
             points.append(
                 PointStruct(
                     id=point_id,
                     vector=embedding,
                     payload={
+                        # Original fields
                         "name": name,  # Store the name as-is
                         "description": description,
                         "parameters": parameters,
                         "category": tool.get("category", "general"),
-                        "original": tool  # Store original tool definition
+                        "original": tool,  # Store original tool definition
+                        
+                        # Enhanced searchable fields
+                        "name_lowercase": name.lower(),
+                        "name_tokens": name_tokens,
+                        "description_tokens": desc_tokens,
+                        "param_names": param_names,
+                        "required_params": required_params,
+                        "param_count": len(param_names),
+                        "has_required_params": len(required_params) > 0,
+                        
+                        # Combined searchable text for full-text search
+                        "searchable_text": f"{name} {description} {' '.join(param_names)}".lower()
                     }
                 )
             )

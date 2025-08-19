@@ -170,6 +170,122 @@ class Settings(BaseSettings):
         description="Number of candidates to rerank with cross-encoder"
     )
 
+    # LTR (Learning to Rank) Configuration
+    enable_ltr: bool = Field(
+        default=False,
+        description="Enable Learning to Rank model (disabled by default until trained)"
+    )
+    ltr_model_path: str = Field(
+        default="./models/ltr_xgboost",
+        description="Path to trained LTR model"
+    )
+    ltr_objective: str = Field(
+        default="rank:pairwise",
+        description="LTR ranking objective: rank:pairwise, rank:ndcg, or rank:map"
+    )
+    ltr_cache_predictions: bool = Field(
+        default=True,
+        description="Cache LTR predictions for performance"
+    )
+    ltr_cache_size: int = Field(
+        default=1000,
+        description="Size of LTR prediction cache"
+    )
+    ltr_retrain_threshold: int = Field(
+        default=1000,
+        description="Number of new evaluations before triggering retraining"
+    )
+    
+    # LTR Feature Configuration
+    ltr_similarity_features: bool = Field(
+        default=True,
+        description="Include similarity scores in LTR features"
+    )
+    ltr_name_features: bool = Field(
+        default=True,
+        description="Include name-based features in LTR"
+    )
+    ltr_description_features: bool = Field(
+        default=True,
+        description="Include description-based features in LTR"
+    )
+    ltr_parameter_features: bool = Field(
+        default=True,
+        description="Include parameter-based features in LTR"
+    )
+    ltr_query_features: bool = Field(
+        default=True,
+        description="Include query-based features in LTR"
+    )
+    ltr_metadata_features: bool = Field(
+        default=True,
+        description="Include metadata features in LTR"
+    )
+    
+    # LTR Training Configuration
+    ltr_learning_rate: float = Field(
+        default=0.1,
+        ge=0.001,
+        le=1.0,
+        description="Learning rate for LTR model training"
+    )
+    ltr_max_depth: int = Field(
+        default=6,
+        ge=1,
+        le=20,
+        description="Maximum tree depth for XGBoost"
+    )
+    ltr_n_estimators: int = Field(
+        default=100,
+        ge=10,
+        le=1000,
+        description="Number of trees in XGBoost ensemble"
+    )
+    ltr_subsample: float = Field(
+        default=0.8,
+        ge=0.1,
+        le=1.0,
+        description="Subsample ratio for training instances"
+    )
+    ltr_colsample_bytree: float = Field(
+        default=0.8,
+        ge=0.1,
+        le=1.0,
+        description="Feature sampling ratio per tree"
+    )
+    ltr_min_child_weight: int = Field(
+        default=1,
+        ge=0,
+        le=10,
+        description="Minimum child weight for tree splits"
+    )
+    ltr_gamma: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=10.0,
+        description="Minimum loss reduction for splits"
+    )
+    ltr_reg_alpha: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=10.0,
+        description="L1 regularization term"
+    )
+    ltr_reg_lambda: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=10.0,
+        description="L2 regularization term"
+    )
+    ltr_seed: int = Field(
+        default=42,
+        description="Random seed for reproducibility"
+    )
+    ltr_n_jobs: int = Field(
+        default=-1,
+        description="Number of parallel threads (-1 for all cores)"
+    )
+
     # Security
     api_key_header: str = Field(default="X-API-Key", description="API key header name")
     enable_api_key: bool = Field(default=False, description="Enable API key authentication")
