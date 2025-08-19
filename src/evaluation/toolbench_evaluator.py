@@ -318,7 +318,9 @@ class ToolBenchEvaluator:
         test_case: Dict[str, Any],
         vector_store: VectorStoreService,
         embedding_service: EmbeddingService,
-        search_service: SearchService
+        search_service: SearchService,
+        add_noise_to_available: int = 0,
+        noise_tools_pool: List[Tool] = None
     ) -> Dict[str, Any]:
         """
         Run evaluation for a single test case.
@@ -328,6 +330,8 @@ class ToolBenchEvaluator:
             vector_store: Vector store service
             embedding_service: Embedding service
             search_service: Search service for orchestrating search strategies
+            add_noise_to_available: Number of noise tools to add to available_tools
+            noise_tools_pool: Pool of noise tools to sample from
 
         Returns:
             Evaluation results for this test case
@@ -345,10 +349,39 @@ class ToolBenchEvaluator:
 
         print(f"  Indexed {len(tools)} tools in {index_time:.2f}s")
 
+        # Add noise tools to available_tools if requested
+        original_tool_count = len(tools)
+        noise_tool_names = []
+        if add_noise_to_available > 0 and noise_tools_pool:
+            import random
+            # Get tool names from test case to avoid duplicates
+            test_tool_names = {tool.function.name for tool in tools}
+
+            # Filter noise pool to exclude tools already in test case
+            available_noise = [
+                tool for tool in noise_tools_pool
+                if tool.function.name not in test_tool_names
+            ]
+
+            # Sample noise tools
+            if len(available_noise) >= add_noise_to_available:
+                noise_tools = random.sample(available_noise, add_noise_to_available)
+            else:
+                noise_tools = available_noise
+                print(f"  WARNING: Only {len(available_noise)} noise tools available, requested {add_noise_to_available}")
+
+            # Track noise tool names for analysis
+            noise_tool_names = [tool.function.name for tool in noise_tools]
+
+            # Add noise tools to the available tools list
+            tools.extend(noise_tools)
+            print(f"  Added {len(noise_tools)} noise tools to available_tools (total: {len(tools)})")
+            print(f"  Noise ratio: {len(noise_tools)/len(tools)*100:.1f}% of available tools are noise")
+
         # Create request with the query
         request = ToolFilterRequest(
             messages=[{"role": "user", "content": query}],
-            available_tools=tools,  # Pass the indexed tools
+            available_tools=tools,  # Pass the indexed tools + noise tools
             max_tools=10
         )
 
@@ -357,7 +390,7 @@ class ToolBenchEvaluator:
         for tool in tools:
             available_tool_names.append(tool.function.name)
 
-        print(f"  Available tool names for filter: {available_tool_names}")
+        print(f"  Available tool names for filter: {len(available_tool_names)} tools")
 
         # Determine search strategy based on configuration
         if getattr(self.settings, 'enable_cross_encoder', True) and getattr(self.settings, 'enable_hybrid_search', True):
@@ -461,7 +494,9 @@ class ToolBenchEvaluator:
         metrics.update({
             "query_id": query_id,
             "query": query,
-            "num_tools_indexed": len(tools),
+            "num_tools_indexed": original_tool_count,  # Original tools without noise
+            "num_tools_available": len(tools),  # Total including noise
+            "num_noise_tools_added": len(noise_tool_names),
             "num_tools_recommended": len(recommended),
             "index_time_ms": index_time * 1000,
             "embed_time_ms": embed_time * 1000,
@@ -469,6 +504,55 @@ class ToolBenchEvaluator:
             "total_time_ms": (index_time + embed_time + search_time) * 1000,
             "all_scores": all_results  # Add all scores for threshold optimization
         })
+
+        # Analyze noise impact on results
+        if noise_tool_names:
+            # Track which recommended tools are noise vs expected
+            recommended_noise = []
+            recommended_expected = []
+            expected_ranks = []
+
+            for idx, tool in enumerate(recommended):
+                tool_name = tool.get("tool_name", "")
+                if tool_name in noise_tool_names:
+                    recommended_noise.append(tool_name)
+                elif tool_name in metrics.get('expected_tools', []):
+                    recommended_expected.append(tool_name)
+                    expected_ranks.append(idx + 1)  # 1-indexed rank
+
+            # Calculate metrics that matter
+            metrics["noise_tools_in_results"] = recommended_noise
+            metrics["num_noise_in_results"] = len(recommended_noise)
+            metrics["expected_tools_in_results"] = recommended_expected
+            metrics["num_expected_in_results"] = len(recommended_expected)
+
+            # Proportion of results that are noise (not necessarily bad)
+            metrics["noise_proportion"] = len(recommended_noise) / len(recommended) if recommended else 0
+
+            # Critical: Are we missing any expected tools?
+            missing_expected = [t for t in metrics.get('expected_tools', []) if t not in recommended_expected]
+            metrics["missing_expected_tools"] = missing_expected
+            metrics["expected_tool_recall"] = len(recommended_expected) / len(metrics.get('expected_tools', [])) if metrics.get('expected_tools') else 0
+
+            # Ranking quality: Average rank of expected tools
+            if expected_ranks:
+                metrics["avg_rank_expected_tools"] = sum(expected_ranks) / len(expected_ranks)
+                metrics["best_rank_expected_tool"] = min(expected_ranks)
+            else:
+                metrics["avg_rank_expected_tools"] = float('inf')
+                metrics["best_rank_expected_tool"] = float('inf')
+
+            # Print analysis
+            if missing_expected:
+                print(f"  ❌ CRITICAL: Missing expected tools: {missing_expected}")
+                print(f"  Expected tool recall: {metrics['expected_tool_recall']*100:.1f}%")
+            else:
+                print(f"  ✅ All expected tools found in results!")
+
+            if expected_ranks:
+                print(f"  Expected tools ranking: positions {expected_ranks}, avg={metrics['avg_rank_expected_tools']:.1f}")
+
+            print(f"  Noise proportion in results: {metrics['noise_proportion']*100:.1f}% ({len(recommended_noise)}/{len(recommended)} tools)")
 
         print(f"  Precision: {metrics['precision']:.3f}, Recall: {metrics['recall']:.3f}, F1: {metrics['f1_score']:.3f}")
         if metrics.get('true_positives', 0) > 0:
@@ -479,13 +563,13 @@ class ToolBenchEvaluator:
 
     async def load_random_toolbench_tools(self,
                                           data_dir: str = "toolbench_data/data/test_instruction",
-                                          target_total: int = 15) -> List[Tool]:
+                                          target_total: int = 1500) -> List[Tool]:
         """
         Load a random sample of tools from ToolBench test instruction files.
 
         Args:
             data_dir: Directory containing test instruction files
-            target_total: Target number of tools to load (default 15)
+            target_total: Target number of tools to load (default 1500)
 
         Returns:
             List of randomly selected Tool objects
@@ -562,7 +646,7 @@ class ToolBenchEvaluator:
         self,
         vector_store: VectorStoreService,
         embedding_service: EmbeddingService,
-        num_tools: int = 15
+        num_tools: int = 1500
     ):
         """
         Index real ToolBench tools as noise to simulate a realistic environment.
@@ -571,7 +655,7 @@ class ToolBenchEvaluator:
         Args:
             vector_store: Vector store service
             embedding_service: Embedding service
-            num_tools: Number of noise tools to index (default 15)
+            num_tools: Number of noise tools to index (default 1500)
         """
         # Check if we have cached tools
         if self._cached_noise_tools is None or self._cached_noise_embeddings is None:
@@ -628,7 +712,8 @@ class ToolBenchEvaluator:
         data_dir: str = "toolbench_data/data/test_instruction",
         num_cases: int = 50,
         clear_collection: bool = True,
-        add_noise_tools: bool = True
+        add_noise_tools: bool = True,
+        add_noise_to_available: int = 0
     ) -> Dict[str, Any]:
         """
         Run evaluation on ToolBench test data.
@@ -638,7 +723,8 @@ class ToolBenchEvaluator:
             data_dir: Directory containing test data
             num_cases: Number of test cases to evaluate
             clear_collection: Whether to clear the collection before each test
-            add_noise_tools: Whether to add sample noise tools for realistic testing
+            add_noise_tools: Whether to add sample noise tools to vector store
+            add_noise_to_available: Number of noise tools to add to available_tools per test
 
         Returns:
             Evaluation summary and results
@@ -677,7 +763,18 @@ class ToolBenchEvaluator:
 
         # Add sample noise tools to simulate realistic environment
         if add_noise_tools:
-            await self.create_sample_noise_tools(vector_store, embedding_service, num_tools=15)
+            await self.create_sample_noise_tools(vector_store, embedding_service, num_tools=1500)
+
+        # Load pool of noise tools for available_tools if needed
+        noise_tools_pool = []
+        if add_noise_to_available > 0:
+            print(f"\nLoading pool of noise tools for available_tools testing...")
+            # Load a larger pool of tools to sample from
+            noise_tools_pool = await self.load_random_toolbench_tools(
+                data_dir=data_dir,
+                target_total=add_noise_to_available * 3  # Load 3x the needed amount for variety
+            )
+            print(f"  Loaded {len(noise_tools_pool)} tools for noise pool")
 
         # Initialize threshold optimizer
         threshold_optimizer = ThresholdOptimizer()
@@ -698,7 +795,7 @@ class ToolBenchEvaluator:
 
                     # Re-add noise tools after clearing
                     if add_noise_tools:
-                        await self.create_sample_noise_tools(vector_store, embedding_service, num_tools=15)
+                        await self.create_sample_noise_tools(vector_store, embedding_service, num_tools=1500)
                 except Exception as e:
                     print(f"  Warning: Could not clear collection: {e}")
 
@@ -706,7 +803,9 @@ class ToolBenchEvaluator:
                 test_case,
                 vector_store,
                 embedding_service,
-                search_service
+                search_service,
+                add_noise_to_available=add_noise_to_available,
+                noise_tools_pool=noise_tools_pool
             )
             results.append(result)
 
@@ -735,6 +834,31 @@ class ToolBenchEvaluator:
         recalls = [r["recall"] for r in results]
         f1_scores = [r["f1_score"] for r in results]
 
+        # Calculate noise impact metrics if applicable
+        noise_metrics = {}
+        if add_noise_to_available > 0:
+            # Focus on what matters: expected tool recall and ranking
+            expected_recalls = [r.get("expected_tool_recall", 1.0) for r in results]
+            avg_ranks = [r.get("avg_rank_expected_tools", float('inf')) for r in results
+                        if r.get("avg_rank_expected_tools") != float('inf')]
+            noise_proportions = [r.get("noise_proportion", 0) for r in results]
+            missing_expected_counts = [len(r.get("missing_expected_tools", [])) for r in results]
+
+            noise_metrics = {
+                "noise_tools_per_test": add_noise_to_available,
+                # Critical metrics
+                "avg_expected_tool_recall": sum(expected_recalls) / len(expected_recalls) if expected_recalls else 0,
+                "min_expected_tool_recall": min(expected_recalls) if expected_recalls else 0,
+                "cases_with_perfect_recall": sum(1 for r in expected_recalls if r == 1.0),
+                "cases_missing_expected": sum(1 for m in missing_expected_counts if m > 0),
+                "total_missing_expected": sum(missing_expected_counts),
+                # Ranking metrics
+                "avg_rank_of_expected": sum(avg_ranks) / len(avg_ranks) if avg_ranks else float('inf'),
+                # Noise proportion (informational)
+                "avg_noise_proportion": sum(noise_proportions) / len(noise_proportions) if noise_proportions else 0,
+                "max_noise_proportion": max(noise_proportions) if noise_proportions else 0
+            }
+
         summary = {
             "test_file": test_file,
             "num_test_cases": num_results,
@@ -758,6 +882,10 @@ class ToolBenchEvaluator:
             }
         }
 
+        # Add noise metrics if applicable
+        if noise_metrics:
+            summary["noise_impact"] = noise_metrics
+
         # Get performance stats if available
         try:
             performance_stats = await vector_store.get_performance_stats()
@@ -776,6 +904,43 @@ class ToolBenchEvaluator:
         print(f"  Average Precision: {avg_precision:.3f}")
         print(f"  Average Recall: {avg_recall:.3f}")
         print(f"  Average F1 Score: {avg_f1:.3f}")
+
+        # Print noise impact if applicable
+        if noise_metrics:
+            print(f"\nNoise Impact Analysis:")
+            print(f"  Noise tools added per test: {noise_metrics['noise_tools_per_test']}")
+
+            # Critical: Expected tool recall
+            print(f"\n  🎯 Expected Tool Recall (CRITICAL):")
+            print(f"    Average recall: {noise_metrics['avg_expected_tool_recall']*100:.1f}%")
+            print(f"    Minimum recall: {noise_metrics['min_expected_tool_recall']*100:.1f}%")
+            print(f"    Cases with perfect recall: {noise_metrics['cases_with_perfect_recall']}/{num_results}")
+            print(f"    Cases missing expected tools: {noise_metrics['cases_missing_expected']}/{num_results}")
+
+            if noise_metrics['total_missing_expected'] > 0:
+                print(f"    ❌ Total missing expected tools: {noise_metrics['total_missing_expected']}")
+
+            # Ranking quality
+            if noise_metrics['avg_rank_of_expected'] != float('inf'):
+                print(f"\n  📊 Expected Tool Ranking:")
+                print(f"    Average rank position: {noise_metrics['avg_rank_of_expected']:.1f}")
+
+            # Noise proportion (informational)
+            print(f"\n  📈 Noise in Results (informational):")
+            print(f"    Average noise proportion: {noise_metrics['avg_noise_proportion']*100:.1f}%")
+            print(f"    Maximum noise proportion: {noise_metrics['max_noise_proportion']*100:.1f}%")
+
+            # Overall assessment based on recall
+            print(f"\n  Overall Noise Resistance:")
+            if noise_metrics['avg_expected_tool_recall'] >= 0.95:
+                print(f"    ✅ EXCELLENT: {noise_metrics['avg_expected_tool_recall']*100:.1f}% expected tool recall")
+            elif noise_metrics['avg_expected_tool_recall'] >= 0.85:
+                print(f"    ✓ GOOD: {noise_metrics['avg_expected_tool_recall']*100:.1f}% expected tool recall")
+            elif noise_metrics['avg_expected_tool_recall'] >= 0.75:
+                print(f"    ⚠️  MODERATE: {noise_metrics['avg_expected_tool_recall']*100:.1f}% expected tool recall")
+            else:
+                print(f"    ❌ POOR: {noise_metrics['avg_expected_tool_recall']*100:.1f}% expected tool recall - needs improvement!")
+
         print(f"\nTiming:")
         print(f"  Average Time per Query: {avg_time:.1f}ms")
         print(f"  Total Time: {total_time/1000:.1f}s")
@@ -873,24 +1038,48 @@ async def main():
     """Main function to run ToolBench evaluation."""
     evaluator = ToolBenchEvaluator()
 
-    # Test with one example first (from retrieval/G1)
-    print("Testing with one example...")
-    await evaluator.run_evaluation(
-        test_file="one_example.json",
-        data_dir="toolbench_data/data/retrieval/G1",
-        num_cases=1,
-        clear_collection=True,
-        add_noise_tools=True  # Add sample tools for realistic testing
-    )
+    # Test with one example first (from retrieval/G1) - without noise
+    # print("Testing with one example (no noise in available_tools)...")
+    # await evaluator.run_evaluation(
+    #     test_file="one_example.json",
+    #     data_dir="toolbench_data/data/retrieval/G1",
+    #     num_cases=1,
+    #     clear_collection=True,
+    #     add_noise_tools=True,  # Add noise to vector store
+    #     add_noise_to_available=0  # No noise in available_tools
+    # )
 
-    # Run full evaluation with G1_instruction (has ground truth)
-    print("\n\nRunning full evaluation with G1_instruction...")
+    # Test with one example with noise in available_tools
+    # print("\n\nTesting with one example (WITH noise in available_tools)...")
+    # await evaluator.run_evaluation(
+    #     test_file="one_example.json",
+    #     data_dir="toolbench_data/data/retrieval/G1",
+    #     num_cases=1,
+    #     clear_collection=True,
+    #     add_noise_tools=True,  # Add noise to vector store
+    #     add_noise_to_available=10  # Add 10 noise tools to available_tools
+    # )
+
+    # Run full evaluation without noise in available_tools (baseline)
+    # print("\n\nRunning evaluation WITHOUT noise in available_tools (baseline)...")
+    # await evaluator.run_evaluation(
+    #     test_file="G2_instruction.json",
+    #     data_dir="toolbench_data/data/test_instruction",
+    #     num_cases=20,
+    #     clear_collection=True,
+    #     add_noise_tools=True,  # Add noise to vector store
+    #     add_noise_to_available=0  # No noise in available_tools
+    # )
+    #
+    # Run full evaluation WITH noise in available_tools
+    print("\n\nRunning evaluation WITH noise in available_tools...")
     await evaluator.run_evaluation(
         test_file="G2_instruction.json",
         data_dir="toolbench_data/data/test_instruction",
-        num_cases=20,  # Start with 20 cases
+        num_cases=20,
         clear_collection=True,
-        add_noise_tools=True  # Add sample tools for realistic testing
+        add_noise_tools=False,  # Add noise to vector store
+        add_noise_to_available=0  # Add 100 noise tools to available_tools per test
     )
 
 
