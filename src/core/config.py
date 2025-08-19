@@ -101,7 +101,7 @@ class Settings(BaseSettings):
         default=300,
         description="TTL for cached search results in seconds"
     )
-    
+
     # Hybrid Search Configuration
     enable_hybrid_search: bool = Field(
         default=True,
@@ -123,7 +123,7 @@ class Settings(BaseSettings):
         le=1.0,
         description="Weight for BM25 scores in hybrid search"
     )
-    
+
     # BM25 Configuration
     bm25_variant: str = Field(
         default="okapi",
@@ -140,6 +140,34 @@ class Settings(BaseSettings):
         ge=0.0,
         le=1.0,
         description="BM25 length normalization parameter"
+    )
+
+    # Cross-Encoder Configuration
+    enable_cross_encoder: bool = Field(
+        default=True,
+        description="Enable cross-encoder reranking for improved accuracy"
+    )
+    cross_encoder_model: str = Field(
+        default="cross-encoder/ms-marco-MiniLM-L-6-v2",
+        description="Cross-encoder model for reranking"
+    )
+    cross_encoder_batch_size: int = Field(
+        default=32,
+        description="Batch size for cross-encoder inference"
+    )
+    cross_encoder_cache_size: int = Field(
+        default=1000,
+        description="Cache size for cross-encoder predictions"
+    )
+    cross_encoder_weight: float = Field(
+        default=0.6,
+        ge=0.0,
+        le=1.0,
+        description="Weight for cross-encoder scores when combining with original scores"
+    )
+    cross_encoder_top_k: int = Field(
+        default=30,
+        description="Number of candidates to rerank with cross-encoder"
     )
 
     # Security

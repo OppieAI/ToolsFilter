@@ -16,6 +16,7 @@ from src.services.embedding_enhancer import ToolEmbeddingEnhancer
 from src.services.query_enhancer import QueryEnhancer
 from src.services.vector_store import VectorStoreService
 from src.services.embeddings import EmbeddingService
+from src.services.search_service import SearchService, SearchStrategy
 from src.core.config import get_settings
 from src.evaluation.threshold_optimizer import ThresholdOptimizer
 from slugify import slugify
@@ -316,7 +317,8 @@ class ToolBenchEvaluator:
         self,
         test_case: Dict[str, Any],
         vector_store: VectorStoreService,
-        embedding_service: EmbeddingService
+        embedding_service: EmbeddingService,
+        search_service: SearchService
     ) -> Dict[str, Any]:
         """
         Run evaluation for a single test case.
@@ -325,6 +327,7 @@ class ToolBenchEvaluator:
             test_case: ToolBench test case
             vector_store: Vector store service
             embedding_service: Embedding service
+            search_service: Search service for orchestrating search strategies
 
         Returns:
             Evaluation results for this test case
@@ -356,31 +359,24 @@ class ToolBenchEvaluator:
 
         print(f"  Available tool names for filter: {available_tool_names}")
 
-        # Check search configuration
-        use_query_enhancement = getattr(self.settings, 'enable_query_enhancement', True)
-        use_hybrid_search = getattr(self.settings, 'enable_hybrid_search', True)
+        # Determine search strategy based on configuration
+        if getattr(self.settings, 'enable_cross_encoder', True) and getattr(self.settings, 'enable_hybrid_search', True):
+            strategy = SearchStrategy.HYBRID_CROSS_ENCODER
+            print(f"  Using strategy: Hybrid + Cross-Encoder Reranking")
+        elif getattr(self.settings, 'enable_hybrid_search', True):
+            strategy = SearchStrategy.HYBRID
+            print(f"  Using strategy: Hybrid (semantic + BM25)")
+        elif getattr(self.settings, 'enable_query_enhancement', True):
+            strategy = SearchStrategy.SEMANTIC
+            print(f"  Using strategy: Semantic with query enhancement")
+        else:
+            strategy = SearchStrategy.SEMANTIC
+            print(f"  Using strategy: Semantic")
 
         start_time = time.time()
 
-        if use_hybrid_search:
-            # Hybrid search (semantic + BM25)
-            print(f"  Using hybrid search (semantic + BM25)")
-
-            # Generate embedding for semantic component
-            query_embedding = await embedding_service.embed_conversation(request.messages)
-            embed_time = time.time() - start_time
-
-            # Perform hybrid search without threshold first to get all scores
-            all_results = await vector_store.hybrid_search(
-                query=query,
-                available_tools=tools,
-                query_embedding=query_embedding,
-                limit=100,
-                method=getattr(self.settings, 'hybrid_search_method', 'weighted'),
-                score_threshold=0.0  # Get all scores for threshold optimization
-            )
-
-        elif use_query_enhancement:
+        # For query enhancement, we need special handling
+        if strategy == SearchStrategy.SEMANTIC and getattr(self.settings, 'enable_query_enhancement', True):
             # Enhanced multi-query search
             query_enhancer = QueryEnhancer()
             enhanced_query = query_enhancer.enhance_query(request.messages, [])
@@ -392,15 +388,8 @@ class ToolBenchEvaluator:
             print(f"  Enhanced query with {len(query_embeddings)} representations")
             print(f"  Query aspects: {list(query_embeddings.keys())}")
 
-            # Debug: Check collection before searching
-            try:
-                collection_info = vector_store.client.get_collection(vector_store.collection_name)
-                print(f"  Before search: Collection has {collection_info.points_count} points")
-            except Exception as e:
-                print(f"  Error checking collection before search: {e}")
-
-            # First search without threshold to see scores using multi-query
-            all_results = await vector_store.search_multi_query(
+            # Use search_multi_query for enhanced search
+            all_results = await search_service.search_multi_query(
                 query_embeddings=query_embeddings,
                 weights=enhanced_query["weights"],
                 limit=100,  # High limit to ensure we get all available tools
@@ -408,24 +397,15 @@ class ToolBenchEvaluator:
                 filter_dict={"name": available_tool_names}  # Only search within tools for this test case
             )
         else:
-            # Original single-query approach
-            query_embedding = await embedding_service.embed_conversation(request.messages)
-            embed_time = time.time() - start_time
-
-            # Debug: Check collection before searching
-            try:
-                collection_info = vector_store.client.get_collection(vector_store.collection_name)
-                print(f"  Before search: Collection has {collection_info.points_count} points")
-            except Exception as e:
-                print(f"  Error checking collection before search: {e}")
-
-            # First search without threshold to see scores
-            all_results = await vector_store.search_similar_tools(
-                query_embedding=query_embedding,
-                limit=100,  # High limit to ensure we get all available tools
-                score_threshold=0.0,  # No threshold to see all scores
-                filter_dict={"name": available_tool_names}  # Only search within tools for this test case
+            # Use unified search interface for all other strategies
+            all_results = await search_service.search(
+                messages=request.messages,
+                available_tools=tools,
+                strategy=strategy,
+                limit=100,
+                score_threshold=0.0  # Get all scores for threshold optimization
             )
+            embed_time = time.time() - start_time
 
         print(f"  Available tools: {len(available_tool_names)}")
         print(f"  All results count: {len(all_results)}")
@@ -446,21 +426,10 @@ class ToolBenchEvaluator:
         # Now search with threshold - use a lower threshold for testing
         test_threshold = self.settings.primary_similarity_threshold  # Lower threshold to get some results
 
-        if use_hybrid_search:
-            # Hybrid search with threshold
-            recommended = await vector_store.hybrid_search(
-                query=query,
-                available_tools=tools,
-                query_embedding=query_embedding,
-                limit=request.max_tools,
-                method=getattr(self.settings, 'hybrid_search_method', 'weighted')
-            )
-            # Filter by threshold (hybrid_search applies threshold internally)
-            recommended = [r for r in recommended if r.get('score', 0) >= test_threshold]
-
-        elif use_query_enhancement:
+        # Perform the same search but with threshold applied
+        if strategy == SearchStrategy.SEMANTIC and getattr(self.settings, 'enable_query_enhancement', True):
             # Enhanced search with threshold
-            recommended = await vector_store.search_multi_query(
+            recommended = await search_service.search_multi_query(
                 query_embeddings=query_embeddings,
                 weights=enhanced_query["weights"],
                 limit=request.max_tools,
@@ -468,12 +437,13 @@ class ToolBenchEvaluator:
                 filter_dict={"name": available_tool_names}  # Only search within tools for this test case
             )
         else:
-            # Original search with threshold
-            recommended = await vector_store.search_similar_tools(
-                query_embedding=query_embedding,
+            # Use unified search interface with threshold
+            recommended = await search_service.search(
+                messages=request.messages,
+                available_tools=tools,
+                strategy=strategy,
                 limit=request.max_tools,
-                score_threshold=test_threshold,
-                filter_dict={"name": available_tool_names}  # Only search within tools for this test case
+                score_threshold=test_threshold
             )
 
         search_time = time.time() - start_time
@@ -694,6 +664,13 @@ class ToolBenchEvaluator:
 
         await vector_store.initialize()
 
+        # Initialize search service
+        search_service = SearchService(
+            vector_store=vector_store,
+            embedding_service=embedding_service
+        )
+        print(f"Initialized search service with strategies: {[s.value for s in search_service.get_available_strategies()]}")
+
         # Clear cache to ensure consistent results
         await vector_store.clear_cache()
         print("Cleared search cache for consistent evaluation")
@@ -728,7 +705,8 @@ class ToolBenchEvaluator:
             result = await self.run_single_evaluation(
                 test_case,
                 vector_store,
-                embedding_service
+                embedding_service,
+                search_service
             )
             results.append(result)
 
@@ -910,7 +888,7 @@ async def main():
     await evaluator.run_evaluation(
         test_file="G2_instruction.json",
         data_dir="toolbench_data/data/test_instruction",
-        num_cases=100,  # Start with 20 cases
+        num_cases=20,  # Start with 20 cases
         clear_collection=True,
         add_noise_tools=True  # Add sample tools for realistic testing
     )

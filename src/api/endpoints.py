@@ -17,6 +17,7 @@ from src.core.models import (
 )
 from src.services.embeddings import EmbeddingService
 from src.services.vector_store import VectorStoreService
+from src.services.search_service import SearchService, SearchStrategy
 from src.services.message_parser import MessageParser
 from src.services.embedding_enhancer import ToolEmbeddingEnhancer
 from src.services.query_enhancer import QueryEnhancer
@@ -72,14 +73,28 @@ def get_fallback_vector_store() -> VectorStoreService:
     return get_service()
 
 
+def get_search_service() -> SearchService:
+    """Get search service instance."""
+    from src.api.main import get_search_service as get_service
+    return get_service()
+
+
+def get_fallback_search_service() -> SearchService:
+    """Get fallback search service instance."""
+    from src.api.main import get_fallback_search_service as get_service
+    return get_service()
+
+
 @router.post("/tools/filter", response_model=ToolFilterResponse)
 async def filter_tools(
     request: ToolFilterRequest,
     authenticated: bool = Depends(verify_api_key),
     embedding_service: EmbeddingService = Depends(get_embedding_service),
     vector_store: VectorStoreService = Depends(get_vector_store),
+    search_service: SearchService = Depends(get_search_service),
     fallback_embedding_service: EmbeddingService = Depends(get_fallback_embedding_service),
-    fallback_vector_store: VectorStoreService = Depends(get_fallback_vector_store)
+    fallback_vector_store: VectorStoreService = Depends(get_fallback_vector_store),
+    fallback_search_service: SearchService = Depends(get_fallback_search_service)
 ):
     """
     Filter tools based on conversation context.
@@ -144,111 +159,83 @@ async def filter_tools(
         
         # Search for similar tools with automatic fallback
         max_tools = request.max_tools or settings.max_tools_to_return
-        model_used = embedding_service.model
         
-        # Check search configuration
-        use_query_enhancement = getattr(settings, 'enable_query_enhancement', True)
-        use_hybrid_search = getattr(settings, 'enable_hybrid_search', True)
+        # Determine search strategy based on configuration
+        if getattr(settings, 'enable_cross_encoder', True) and getattr(settings, 'enable_hybrid_search', True):
+            strategy = SearchStrategy.HYBRID_CROSS_ENCODER
+        elif getattr(settings, 'enable_hybrid_search', True):
+            strategy = SearchStrategy.HYBRID
+        elif getattr(settings, 'enable_query_enhancement', True):
+            # Query enhancement uses multi-query semantic search
+            strategy = SearchStrategy.SEMANTIC
+        else:
+            strategy = SearchStrategy.SEMANTIC
+        
+        logger.info(f"Using search strategy: {strategy.value}")
         
         try:
-            if use_hybrid_search:
-                # Hybrid search (semantic + BM25) - PREFERRED for best results
-                logger.info(f"Using hybrid search with method: {settings.hybrid_search_method}")
-                
-                # Extract query from messages for BM25 component
-                query_text = " ".join(msg["content"] for msg in request.messages if msg.get("role") == "user")
-                
-                # Generate embedding for semantic component
-                conversation_embedding = await embedding_service.embed_conversation(request.messages)
-                
-                # Perform hybrid search
-                similar_tools = await vector_store.hybrid_search(
-                    query=query_text,
-                    available_tools=request.available_tools,
-                    query_embedding=conversation_embedding,
-                    limit=max_tools * 2,  # Get more candidates for filtering
-                    method=getattr(settings, 'hybrid_search_method', 'weighted'),
-                    score_threshold=settings.primary_similarity_threshold
-                )
-                
-                # Add metadata for logging
-                conversation_analysis["search_method"] = "hybrid"
-                conversation_analysis["hybrid_method"] = settings.hybrid_search_method
-                
-            elif use_query_enhancement:
-                # Enhanced multi-query search
+            # Use search service for all search operations
+            if strategy == SearchStrategy.SEMANTIC and getattr(settings, 'enable_query_enhancement', True):
+                # Special case: multi-query search with query enhancement
                 query_enhancer = QueryEnhancer()
                 enhanced_query = query_enhancer.enhance_query(request.messages, used_tools)
                 
-                # Generate embeddings for all query representations
-                query_embeddings = await embedding_service.embed_queries(enhanced_query["queries"])
+                # Generate embeddings for enhanced queries
+                query_embeddings = await search_service.embedding_service.embed_queries(enhanced_query["queries"])
                 
-                # Search with multiple queries and weighted aggregation
-                similar_tools = await vector_store.search_multi_query(
+                # Use search_multi_query method
+                similar_tools = await search_service.search_multi_query(
                     query_embeddings=query_embeddings,
                     weights=enhanced_query["weights"],
-                    limit=max_tools * 2,  # Get more candidates for filtering
+                    limit=max_tools * 2,
                     score_threshold=settings.primary_similarity_threshold,
-                    filter_dict={"name": available_tool_names}  # Only search within available tools
+                    filter_dict={"name": available_tool_names}
                 )
                 
-                # Store metadata for logging
+                # Store metadata
                 conversation_analysis.update(enhanced_query["metadata"])
+                conversation_analysis["search_method"] = "multi_query"
             else:
-                # Original single-query search
-                conversation_embedding = await embedding_service.embed_conversation(request.messages)
-                similar_tools = await vector_store.search_similar_tools(
-                    query_embedding=conversation_embedding,
+                # Use unified search interface
+                similar_tools = await search_service.search(
+                    messages=request.messages,
+                    available_tools=request.available_tools,
+                    strategy=strategy,
                     limit=max_tools * 2,  # Get more candidates for filtering
-                    score_threshold=settings.primary_similarity_threshold,
-                    filter_dict={"name": available_tool_names}  # Only search within available tools
+                    score_threshold=settings.primary_similarity_threshold
                 )
+                
+                # Add metadata based on strategy
+                conversation_analysis["search_method"] = strategy.value
+                if strategy in [SearchStrategy.HYBRID, SearchStrategy.HYBRID_CROSS_ENCODER]:
+                    conversation_analysis["hybrid_method"] = settings.hybrid_search_method
+                if strategy in [SearchStrategy.CROSS_ENCODER, SearchStrategy.HYBRID_CROSS_ENCODER]:
+                    conversation_analysis["cross_encoder_enabled"] = True
+            
+            model_used = search_service.embedding_service.model
+            
         except Exception as e:
             logger.warning(f"Primary search failed: {e}")
             
             # Try fallback if available
-            if fallback_vector_store and fallback_embedding_service:
+            if fallback_search_service:
                 logger.info("Attempting search with fallback model...")
                 
-                if use_hybrid_search:
-                    # Hybrid search with fallback
-                    logger.info(f"Using fallback hybrid search")
-                    query_text = " ".join(msg["content"] for msg in request.messages if msg.get("role") == "user")
-                    conversation_embedding = await fallback_embedding_service.embed_conversation(request.messages)
-                    
-                    similar_tools = await fallback_vector_store.hybrid_search(
-                        query=query_text,
+                try:
+                    similar_tools = await fallback_search_service.search(
+                        messages=request.messages,
                         available_tools=request.available_tools,
-                        query_embedding=conversation_embedding,
+                        strategy=strategy,  # Use same strategy with fallback
                         limit=max_tools * 2,
-                        method=getattr(settings, 'hybrid_search_method', 'weighted'),
                         score_threshold=settings.fallback_similarity_threshold
                     )
-                    conversation_analysis["search_method"] = "hybrid_fallback"
                     
-                elif use_query_enhancement:
-                    # Enhanced search with fallback
-                    query_enhancer = QueryEnhancer()
-                    enhanced_query = query_enhancer.enhance_query(request.messages, used_tools)
-                    query_embeddings = await fallback_embedding_service.embed_queries(enhanced_query["queries"])
-                    similar_tools = await fallback_vector_store.search_multi_query(
-                        query_embeddings=query_embeddings,
-                        weights=enhanced_query["weights"],
-                        limit=max_tools * 2,
-                        score_threshold=settings.fallback_similarity_threshold,
-                        filter_dict={"name": available_tool_names}
-                    )
-                    conversation_analysis.update(enhanced_query["metadata"])
-                else:
-                    # Original fallback search
-                    conversation_embedding = await fallback_embedding_service.embed_conversation(request.messages)
-                    similar_tools = await fallback_vector_store.search_similar_tools(
-                        query_embedding=conversation_embedding,
-                        limit=max_tools * 2,
-                        score_threshold=settings.fallback_similarity_threshold,
-                        filter_dict={"name": available_tool_names}
-                    )
-                model_used = fallback_embedding_service.model
+                    conversation_analysis["search_method"] = f"{strategy.value}_fallback"
+                    model_used = fallback_search_service.embedding_service.model
+                    
+                except Exception as fallback_error:
+                    logger.error(f"Fallback search also failed: {fallback_error}")
+                    raise
             else:
                 raise
         
@@ -407,10 +394,8 @@ async def search_tools(
     query: str,
     limit: int = 10,
     authenticated: bool = Depends(verify_api_key),
-    embedding_service: EmbeddingService = Depends(get_embedding_service),
-    vector_store: VectorStoreService = Depends(get_vector_store),
-    fallback_embedding_service: EmbeddingService = Depends(get_fallback_embedding_service),
-    fallback_vector_store: VectorStoreService = Depends(get_fallback_vector_store)
+    search_service: SearchService = Depends(get_search_service),
+    fallback_search_service: SearchService = Depends(get_fallback_search_service)
 ):
     """
     Search for tools by text query.
@@ -418,34 +403,42 @@ async def search_tools(
     This endpoint allows searching for tools using natural language.
     """
     try:
-        model_used = embedding_service.model
+        # Determine search strategy (for simple text search, use the configured default)
+        if getattr(settings, 'enable_cross_encoder', True) and getattr(settings, 'enable_hybrid_search', True):
+            strategy = SearchStrategy.HYBRID_CROSS_ENCODER
+        elif getattr(settings, 'enable_hybrid_search', True):
+            strategy = SearchStrategy.HYBRID
+        else:
+            strategy = SearchStrategy.SEMANTIC
         
         try:
-            # Try primary store first
-            query_embedding = await embedding_service.embed_text(query)
-            similar_tools = await vector_store.search_similar_tools(
-                query_embedding=query_embedding,
+            # Try primary search service first
+            similar_tools = await search_service.search(
+                query=query,
+                strategy=strategy,
                 limit=limit
             )
+            model_used = search_service.embedding_service.model
         except Exception as e:
             logger.warning(f"Primary search failed: {e}")
             
             # Try fallback if available
-            if fallback_vector_store and fallback_embedding_service:
+            if fallback_search_service:
                 logger.info("Attempting search with fallback model...")
-                query_embedding = await fallback_embedding_service.embed_text(query)
-                similar_tools = await fallback_vector_store.search_similar_tools(
-                    query_embedding=query_embedding,
+                similar_tools = await fallback_search_service.search(
+                    query=query,
+                    strategy=strategy,
                     limit=limit
                 )
-                model_used = fallback_embedding_service.model
+                model_used = fallback_search_service.embedding_service.model
             else:
                 raise
         
         return {
             "query": query,
             "results": similar_tools,
-            "model_used": model_used
+            "model_used": model_used,
+            "search_strategy": strategy.value
         }
         
     except Exception as e:

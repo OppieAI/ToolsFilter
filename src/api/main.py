@@ -15,6 +15,7 @@ from src.core.models import HealthStatus, ErrorResponse
 from src.api.endpoints import router
 from src.services.vector_store import VectorStoreService
 from src.services.embeddings import EmbeddingService
+from src.services.search_service import SearchService
 
 # Configure logging
 settings = get_settings()
@@ -30,12 +31,14 @@ vector_store: VectorStoreService = None
 fallback_vector_store: VectorStoreService = None
 embedding_service: EmbeddingService = None
 fallback_embedding_service: EmbeddingService = None
+search_service: SearchService = None
+fallback_search_service: SearchService = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
-    global vector_store, fallback_vector_store, embedding_service, fallback_embedding_service
+    global vector_store, fallback_vector_store, embedding_service, fallback_embedding_service, search_service, fallback_search_service
     
     logger.info("Starting PTR Tool Filter API...")
     
@@ -61,6 +64,13 @@ async def lifespan(app: FastAPI):
         )
         await vector_store.initialize()
         
+        # Initialize primary search service
+        search_service = SearchService(
+            vector_store=vector_store,
+            embedding_service=embedding_service
+        )
+        logger.info("Primary search service initialized")
+        
         # Initialize fallback services if fallback model is configured
         if settings.fallback_embedding_model:
             # Initialize fallback embedding service
@@ -82,6 +92,13 @@ async def lifespan(app: FastAPI):
                 similarity_threshold=settings.fallback_similarity_threshold
             )
             await fallback_vector_store.initialize()
+            
+            # Initialize fallback search service
+            fallback_search_service = SearchService(
+                vector_store=fallback_vector_store,
+                embedding_service=fallback_embedding_service
+            )
+            logger.info("Fallback search service initialized")
         
         logger.info("All services initialized successfully")
         
@@ -215,6 +232,16 @@ def get_embedding_service() -> EmbeddingService:
 def get_fallback_embedding_service() -> EmbeddingService:
     """Get fallback embedding service instance."""
     return fallback_embedding_service
+
+
+def get_search_service() -> SearchService:
+    """Get search service instance."""
+    return search_service
+
+
+def get_fallback_search_service() -> SearchService:
+    """Get fallback search service instance."""
+    return fallback_search_service
 
 
 if __name__ == "__main__":
