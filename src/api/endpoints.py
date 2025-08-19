@@ -146,11 +146,36 @@ async def filter_tools(
         max_tools = request.max_tools or settings.max_tools_to_return
         model_used = embedding_service.model
         
-        # Check if query enhancement is enabled (default: True)
+        # Check search configuration
         use_query_enhancement = getattr(settings, 'enable_query_enhancement', True)
+        use_hybrid_search = getattr(settings, 'enable_hybrid_search', True)
         
         try:
-            if use_query_enhancement:
+            if use_hybrid_search:
+                # Hybrid search (semantic + BM25) - PREFERRED for best results
+                logger.info(f"Using hybrid search with method: {settings.hybrid_search_method}")
+                
+                # Extract query from messages for BM25 component
+                query_text = " ".join(msg["content"] for msg in request.messages if msg.get("role") == "user")
+                
+                # Generate embedding for semantic component
+                conversation_embedding = await embedding_service.embed_conversation(request.messages)
+                
+                # Perform hybrid search
+                similar_tools = await vector_store.hybrid_search(
+                    query=query_text,
+                    available_tools=request.available_tools,
+                    query_embedding=conversation_embedding,
+                    limit=max_tools * 2,  # Get more candidates for filtering
+                    method=getattr(settings, 'hybrid_search_method', 'weighted'),
+                    score_threshold=settings.primary_similarity_threshold
+                )
+                
+                # Add metadata for logging
+                conversation_analysis["search_method"] = "hybrid"
+                conversation_analysis["hybrid_method"] = settings.hybrid_search_method
+                
+            elif use_query_enhancement:
                 # Enhanced multi-query search
                 query_enhancer = QueryEnhancer()
                 enhanced_query = query_enhancer.enhance_query(request.messages, used_tools)
@@ -185,7 +210,23 @@ async def filter_tools(
             if fallback_vector_store and fallback_embedding_service:
                 logger.info("Attempting search with fallback model...")
                 
-                if use_query_enhancement:
+                if use_hybrid_search:
+                    # Hybrid search with fallback
+                    logger.info(f"Using fallback hybrid search")
+                    query_text = " ".join(msg["content"] for msg in request.messages if msg.get("role") == "user")
+                    conversation_embedding = await fallback_embedding_service.embed_conversation(request.messages)
+                    
+                    similar_tools = await fallback_vector_store.hybrid_search(
+                        query=query_text,
+                        available_tools=request.available_tools,
+                        query_embedding=conversation_embedding,
+                        limit=max_tools * 2,
+                        method=getattr(settings, 'hybrid_search_method', 'weighted'),
+                        score_threshold=settings.fallback_similarity_threshold
+                    )
+                    conversation_analysis["search_method"] = "hybrid_fallback"
+                    
+                elif use_query_enhancement:
                     # Enhanced search with fallback
                     query_enhancer = QueryEnhancer()
                     enhanced_query = query_enhancer.enhance_query(request.messages, used_tools)
@@ -247,16 +288,27 @@ async def filter_tools(
         # Calculate metadata
         processing_time = (time.time() - start_time) * 1000
         
+        # Build metadata including search method info
+        metadata = {
+            "processing_time_ms": round(processing_time, 2),
+            "embedding_model": model_used,
+            "total_tools_analyzed": len(request.available_tools),
+            "conversation_messages": len(request.messages),
+            "request_id": request_id,
+            "conversation_patterns": conversation_analysis["topics"]
+        }
+        
+        # Add search method information
+        if "search_method" in conversation_analysis:
+            metadata["search_method"] = conversation_analysis["search_method"]
+            if conversation_analysis["search_method"] in ["hybrid", "hybrid_fallback"]:
+                metadata["hybrid_method"] = conversation_analysis.get("hybrid_method", "weighted")
+                metadata["semantic_weight"] = settings.semantic_weight
+                metadata["bm25_weight"] = settings.bm25_weight
+        
         response = ToolFilterResponse(
             recommended_tools=recommended_tools,
-            metadata={
-                "processing_time_ms": round(processing_time, 2),
-                "embedding_model": model_used,
-                "total_tools_analyzed": len(request.available_tools),
-                "conversation_messages": len(request.messages),
-                "request_id": request_id,
-                "conversation_patterns": conversation_analysis["topics"]
-            }
+            metadata=metadata
         )
         
         logger.info(
