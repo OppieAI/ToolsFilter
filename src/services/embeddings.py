@@ -23,7 +23,7 @@ class EmbeddingService:
     def __init__(self, model: Optional[str] = None, api_key: Optional[str] = None, batch_size: Optional[int] = None):
         """Initialize embedding service with Redis cache."""
         self.model = model or settings.primary_embedding_model
-        self.api_key = api_key
+        self.api_key = api_key or settings.primary_embedding_api_key
         self.batch_size = batch_size or settings.embedding_batch_size
         self._dimension_cache = {}  # Cache dimensions to avoid repeated API calls
         
@@ -249,10 +249,16 @@ class EmbeddingService:
         """
         # Extract tool information
         if tool.get("type") == "function":
-            function = tool.get("function", {})
-            name = function.get("name", "")
-            description = function.get("description", "")
-            parameters = function.get("parameters", {})
+            # Handle both old nested and new flat structure
+            if "function" in tool:
+                function = tool.get("function", {})
+                name = function.get("name", "")
+                description = function.get("description", "")
+                parameters = function.get("parameters", {})
+            else:
+                name = tool.get("name", "")
+                description = tool.get("description", "")
+                parameters = tool.get("parameters", {})
             
             # Build tool text representation
             tool_text = f"{name}: {description}"

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Tuple
 from datetime import datetime
 
-from src.core.models import Tool, ToolFilterRequest, ChatMessage, ToolFunction
+from src.core.models import Tool, ToolFilterRequest, ChatMessage
 from src.services.embedding_enhancer import ToolEmbeddingEnhancer
 from src.services.query_enhancer import QueryEnhancer
 from src.services.vector_store import VectorStoreService
@@ -38,6 +38,121 @@ class ToolBenchEvaluator:
         # Cache for noise tools to avoid reloading
         self._cached_noise_tools = None
         self._cached_noise_embeddings = None
+
+    def _calculate_ranking_metrics(self, expected_set: set, recommended_tools: List[Dict[str, Any]]) -> Dict[str, float]:
+        """
+        Calculate ranking-aware metrics that truly measure retrieval quality.
+
+        These metrics focus on:
+        1. Whether expected tools are found (recall)
+        2. How high they rank (MRR, NDCG)
+        3. Precision at different cutoffs (P@k)
+
+        Args:
+            expected_set: Set of expected tool names
+            recommended_tools: Ordered list of recommended tools
+
+        Returns:
+            Dictionary of ranking metrics
+        """
+        import math
+
+        if not expected_set or not recommended_tools:
+            return {
+                "mrr": 0.0,
+                "ndcg@3": 0.0,
+                "ndcg@5": 0.0,
+                "ndcg@10": 0.0,
+                "p@1": 0.0,
+                "p@3": 0.0,
+                "p@5": 0.0,
+                "expected_tools_in_top3": 0,
+                "expected_tools_in_top5": 0,
+                "expected_tools_in_top10": 0,
+                "first_relevant_rank": None
+            }
+
+        # Extract tool names in order
+        ranked_tool_names = []
+        for tool in recommended_tools:
+            tool_name = tool.get("tool_name", tool.get("name", ""))
+            if tool_name:
+                ranked_tool_names.append(tool_name)
+
+        # Calculate Mean Reciprocal Rank (MRR)
+        # MRR = 1/rank of first relevant result
+        mrr = 0.0
+        first_relevant_rank = None
+        for i, tool_name in enumerate(ranked_tool_names):
+            if tool_name in expected_set:
+                first_relevant_rank = i + 1  # 1-indexed
+                mrr = 1.0 / first_relevant_rank
+                break
+
+        # Calculate NDCG@k (Normalized Discounted Cumulative Gain)
+        def calculate_ndcg_at_k(k: int) -> float:
+            dcg = 0.0
+            idcg = 0.0
+
+            # Calculate DCG@k
+            for i in range(min(k, len(ranked_tool_names))):
+                if ranked_tool_names[i] in expected_set:
+                    # Relevance is binary: 1 if expected, 0 otherwise
+                    relevance = 1.0
+                    dcg += relevance / math.log2(i + 2)  # i+2 because log2(1)=0
+
+            # Calculate ideal DCG@k (all expected tools at top positions)
+            num_expected = len(expected_set)
+            for i in range(min(k, num_expected)):
+                idcg += 1.0 / math.log2(i + 2)
+
+            # NDCG = DCG / IDCG
+            return dcg / idcg if idcg > 0 else 0.0
+
+        # Calculate NDCG at different cutoffs
+        ndcg_3 = calculate_ndcg_at_k(3)
+        ndcg_5 = calculate_ndcg_at_k(5)
+        ndcg_10 = calculate_ndcg_at_k(10)
+
+        # Calculate Precision@k (what % of top-k are relevant?)
+        def precision_at_k(k: int) -> float:
+            top_k = ranked_tool_names[:k]
+            if not top_k:
+                return 0.0
+            relevant_in_top_k = sum(1 for t in top_k if t in expected_set)
+            return relevant_in_top_k / len(top_k)
+
+        p_at_1 = precision_at_k(1)
+        p_at_3 = precision_at_k(3)
+        p_at_5 = precision_at_k(5)
+
+        # Count expected tools in top positions
+        def count_expected_in_top_k(k: int) -> int:
+            top_k = ranked_tool_names[:k]
+            return sum(1 for t in top_k if t in expected_set)
+
+        expected_in_top3 = count_expected_in_top_k(3)
+        expected_in_top5 = count_expected_in_top_k(5)
+        expected_in_top10 = count_expected_in_top_k(10)
+
+        return {
+            # Mean Reciprocal Rank - focuses on first relevant result
+            "mrr": mrr,
+            # NDCG - considers both relevance and position
+            "ndcg@3": ndcg_3,
+            "ndcg@5": ndcg_5,
+            "ndcg@10": ndcg_10,
+            # Precision at different cutoffs
+            "p@1": p_at_1,
+            "p@3": p_at_3,
+            "p@5": p_at_5,
+            # Counts of expected tools in top positions
+            "expected_tools_in_top3": expected_in_top3,
+            "expected_tools_in_top5": expected_in_top5,
+            "expected_tools_in_top10": expected_in_top10,
+            # Rank of first relevant result
+            "first_relevant_rank": first_relevant_rank
+        }
 
     def convert_api_to_openai_format(self, api: Dict[str, Any]) -> Tool:
         """
@@ -117,15 +232,15 @@ class ToolBenchEvaluator:
 
         return Tool(
             type="function",
-            function=ToolFunction(
-                name=function_name,
-                description=api.get("api_description", ""),
-                parameters={
-                    "type": "object",
-                    "properties": properties,
-                    "required": required
-                }
-            )
+            name=function_name,
+            description=api.get("api_description", ""),
+            parameters={
+                "type": "object",
+                "properties": properties,
+                "required": required,
+                "additionalProperties": False
+            },
+            strict=True
         )
 
     def load_test_data(self, filename: str = "G1_instruction.json", data_dir: str = "toolbench_data/data/test_instruction") -> List[Dict[str, Any]]:
@@ -137,6 +252,36 @@ class ToolBenchEvaluator:
 
         with open(file_path, 'r') as f:
             return json.load(f)
+
+    async def index_tools(self, tools: List[Tool], vector_store: VectorStoreService, embedding_service: EmbeddingService) -> List[Tool]:
+      # Generate embeddings for tools
+      tool_texts = []
+      enhancer = ToolEmbeddingEnhancer()
+      for tool in tools:
+        # Use the enhancer to convert tool to rich text
+        text = enhancer.tool_to_rich_text(tool)
+        tool_texts.append(text)
+
+      # Batch generate embeddings
+      embeddings = await embedding_service.embed_batch(tool_texts)
+
+      # Convert Tool objects to dict format for indexing
+      tool_dicts = []
+      for tool in tools:
+        tool_dicts.append(tool.model_dump())
+
+      # Index tools with embeddings
+      print(f"  Indexing {len(tool_dicts)} tools with {len(embeddings)} embeddings")
+      print(f"  First tool: {tools[0].name if tools else 'None'}")
+      print(f"  Embedding dimension: {len(embeddings[0]) if embeddings else 0}")
+
+      # Debug: Print the actual tool names being indexed
+      indexed_names = [tool.name for tool in tools]
+      print(f"  Sample Tool names being indexed: {indexed_names[:10]}")
+
+      await vector_store.index_tools_batch(tool_dicts, embeddings)
+
+      return tools
 
     async def index_tools_from_case(
         self,
@@ -174,8 +319,7 @@ class ToolBenchEvaluator:
         tool_texts = []
         enhancer = ToolEmbeddingEnhancer()
         for tool in tools:
-            # Combine function name and description for embedding
-            func = tool.function
+            # Use the enhancer to convert tool to rich text
             text = enhancer.tool_to_rich_text(tool)
             tool_texts.append(text)
 
@@ -189,11 +333,11 @@ class ToolBenchEvaluator:
 
         # Index tools with embeddings
         print(f"  Indexing {len(tool_dicts)} tools with {len(embeddings)} embeddings")
-        print(f"  First tool: {tools[0].function.name if tools else 'None'}")
+        print(f"  First tool: {tools[0].name if tools else 'None'}")
         print(f"  Embedding dimension: {len(embeddings[0]) if embeddings else 0}")
 
         # Debug: Print the actual tool names being indexed
-        indexed_names = [tool.function.name for tool in tools]
+        indexed_names = [tool.name for tool in tools]
         print(f"  Tool names being indexed: {indexed_names}")
 
         await vector_store.index_tools_batch(tool_dicts, embeddings)
@@ -210,7 +354,7 @@ class ToolBenchEvaluator:
 
             # Debug: Verify the tools are searchable by doing a test query
             if tools:
-                test_tool_name = tools[0].function.name
+                test_tool_name = tools[0].name
                 print(f"  Verifying tool '{test_tool_name}' is searchable...")
 
                 # Try to retrieve the specific tool
@@ -298,14 +442,33 @@ class ToolBenchEvaluator:
         false_positives = len(recommended_set - expected_set)
         false_negatives = len(expected_set - recommended_set)
 
+        # Traditional precision/recall (may be misleading with noise tools)
         precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0
         recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0
         f1_score = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
 
+        # More meaningful metrics when noise tools are present
+        # Relevance Precision: Of returned tools, what % are relevant (expected)?
+        relevance_precision = true_positives / len(recommended_set) if len(recommended_set) > 0 else 0
+
+        # Expected Tool Recall: Of expected tools, what % were found?
+        expected_recall = true_positives / len(expected_set) if len(expected_set) > 0 else 0
+
+        # Cleaner F1 score based on relevance_precision and expected_recall
+        relevance_f1 = 2 * relevance_precision * expected_recall / (relevance_precision + expected_recall) if (relevance_precision + expected_recall) > 0 else 0
+
+        # Calculate ranking-aware metrics (these are what really matter!)
+        ranking_metrics = self._calculate_ranking_metrics(expected_set, recommended_tools)
+
         return {
-            "precision": precision,
-            "recall": recall,
-            "f1_score": f1_score,
+            "precision": precision,  # Keep for backward compatibility
+            "recall": recall,  # Keep for backward compatibility
+            "f1_score": f1_score,  # Traditional F1 (may be misleading with noise)
+            "relevance_precision": relevance_precision,  # New: clearer metric
+            "expected_recall": expected_recall,  # New: clearer metric
+            "relevance_f1": relevance_f1,  # New: F1 based on cleaner metrics
+            # Ranking metrics (CRITICAL for measuring improvement!)
+            **ranking_metrics,
             "true_positives": true_positives,
             "false_positives": false_positives,
             "false_negatives": false_negatives,
@@ -355,12 +518,12 @@ class ToolBenchEvaluator:
         if add_noise_to_available > 0 and noise_tools_pool:
             import random
             # Get tool names from test case to avoid duplicates
-            test_tool_names = {tool.function.name for tool in tools}
+            test_tool_names = {tool.name for tool in tools}
 
             # Filter noise pool to exclude tools already in test case
             available_noise = [
                 tool for tool in noise_tools_pool
-                if tool.function.name not in test_tool_names
+                if tool.name not in test_tool_names
             ]
 
             # Sample noise tools
@@ -371,7 +534,7 @@ class ToolBenchEvaluator:
                 print(f"  WARNING: Only {len(available_noise)} noise tools available, requested {add_noise_to_available}")
 
             # Track noise tool names for analysis
-            noise_tool_names = [tool.function.name for tool in noise_tools]
+            noise_tool_names = [tool.name for tool in noise_tools]
 
             # Add noise tools to the available tools list
             tools.extend(noise_tools)
@@ -388,12 +551,18 @@ class ToolBenchEvaluator:
         # Extract tool names for filtering (only search within indexed tools for this test case)
         available_tool_names = []
         for tool in tools:
-            available_tool_names.append(tool.function.name)
+            available_tool_names.append(tool.name)
 
         print(f"  Available tool names for filter: {len(available_tool_names)} tools")
 
         # Determine search strategy based on configuration
-        if getattr(self.settings, 'enable_cross_encoder', True) and getattr(self.settings, 'enable_hybrid_search', True):
+        if getattr(self.settings, 'enable_ltr', True) and getattr(self.settings, 'enable_hybrid_search', True):
+            strategy = SearchStrategy.HYBRID_LTR
+            print(f"  Using strategy: Hybrid + Cross-Encoder Reranking")
+        elif getattr(self.settings, 'enable_ltr', True):
+            strategy = SearchStrategy.LTR
+            print(f"  Using strategy: Hybrid + Cross-Encoder Reranking")
+        elif getattr(self.settings, 'enable_cross_encoder', True) and getattr(self.settings, 'enable_hybrid_search', True):
             strategy = SearchStrategy.HYBRID_CROSS_ENCODER
             print(f"  Using strategy: Hybrid + Cross-Encoder Reranking")
         elif getattr(self.settings, 'enable_hybrid_search', True):
@@ -407,54 +576,55 @@ class ToolBenchEvaluator:
             print(f"  Using strategy: Semantic")
 
         start_time = time.time()
+        embed_time = time.time() - start_time
 
-        # For query enhancement, we need special handling
-        if strategy == SearchStrategy.SEMANTIC and getattr(self.settings, 'enable_query_enhancement', True):
-            # Enhanced multi-query search
-            query_enhancer = QueryEnhancer()
-            enhanced_query = query_enhancer.enhance_query(request.messages, [])
-
-            # Generate embeddings for all query representations
-            query_embeddings = await embedding_service.embed_queries(enhanced_query["queries"])
-            embed_time = time.time() - start_time
-
-            print(f"  Enhanced query with {len(query_embeddings)} representations")
-            print(f"  Query aspects: {list(query_embeddings.keys())}")
-
-            # Use search_multi_query for enhanced search
-            all_results = await search_service.search_multi_query(
-                query_embeddings=query_embeddings,
-                weights=enhanced_query["weights"],
-                limit=100,  # High limit to ensure we get all available tools
-                score_threshold=0.0,  # No threshold to see all scores
-                filter_dict={"name": available_tool_names}  # Only search within tools for this test case
-            )
-        else:
-            # Use unified search interface for all other strategies
-            all_results = await search_service.search(
-                messages=request.messages,
-                available_tools=tools,
-                strategy=strategy,
-                limit=100,
-                score_threshold=0.0  # Get all scores for threshold optimization
-            )
-            embed_time = time.time() - start_time
-
-        print(f"  Available tools: {len(available_tool_names)}")
-        print(f"  All results count: {len(all_results)}")
-
-        # Sanity check: with zero threshold and filtering, we should get back exactly the available tools
-        if len(all_results) != len(available_tool_names):
-            print(f"  WARNING: Expected {len(available_tool_names)} results but got {len(all_results)}")
-            print(f"  Missing tools might not be indexed properly!")
-
-        print(f"  All scores: {[r.get('score', 0) for r in all_results]}")
-
-        # Print tool names for debugging
-        if all_results:
-            print(f"  Top tools found:")
-            for i, result in enumerate(all_results[:3]):
-                print(f"    {i+1}. {result.get('tool_name', 'Unknown')} (score: {result.get('score', 0):.3f})")
+        # # For query enhancement, we need special handling
+        # if strategy == SearchStrategy.SEMANTIC and getattr(self.settings, 'enable_query_enhancement', True):
+        #     # Enhanced multi-query search
+        #     query_enhancer = QueryEnhancer()
+        #     enhanced_query = query_enhancer.enhance_query(request.messages, [])
+        #
+        #     # Generate embeddings for all query representations
+        #     query_embeddings = await embedding_service.embed_queries(enhanced_query["queries"])
+        #     embed_time = time.time() - start_time
+        #
+        #     print(f"  Enhanced query with {len(query_embeddings)} representations")
+        #     print(f"  Query aspects: {list(query_embeddings.keys())}")
+        #
+        #     # Use search_multi_query for enhanced search
+        #     all_results = await search_service.search_multi_query(
+        #         query_embeddings=query_embeddings,
+        #         weights=enhanced_query["weights"],
+        #         limit=100,  # High limit to ensure we get all available tools
+        #         score_threshold=0.0,  # No threshold to see all scores
+        #         filter_dict={"name": available_tool_names}  # Only search within tools for this test case
+        #     )
+        # else:
+        #     # Use unified search interface for all other strategies
+        #     all_results = await search_service.search(
+        #         messages=request.messages,
+        #         available_tools=tools,
+        #         strategy=strategy,
+        #         limit=100,
+        #         score_threshold=0.0  # Get all scores for threshold optimization
+        #     )
+        #
+        #
+        # print(f"  Available tools: {len(available_tool_names)}")
+        # print(f"  All results count: {len(all_results)}")
+        #
+        # # Sanity check: with zero threshold and filtering, we should get back exactly the available tools
+        # if len(all_results) != len(available_tool_names):
+        #     print(f"  WARNING: Expected {len(available_tool_names)} results but got {len(all_results)}")
+        #     print(f"  Missing tools might not be indexed properly!")
+        #
+        # print(f"  All scores: {[r.get('score', 0) for r in all_results]}")
+        #
+        # # Print tool names for debugging
+        # if all_results:
+        #     print(f"  Top tools found:")
+        #     for i, result in enumerate(all_results[:3]):
+        #         print(f"    {i+1}. {result.get('tool_name', 'Unknown')} (score: {result.get('score', 0):.3f})")
 
         # Now search with threshold - use a lower threshold for testing
         test_threshold = self.settings.primary_similarity_threshold  # Lower threshold to get some results
@@ -502,7 +672,6 @@ class ToolBenchEvaluator:
             "embed_time_ms": embed_time * 1000,
             "search_time_ms": search_time * 1000,
             "total_time_ms": (index_time + embed_time + search_time) * 1000,
-            "all_scores": all_results  # Add all scores for threshold optimization
         })
 
         # Analyze noise impact on results
@@ -554,7 +723,19 @@ class ToolBenchEvaluator:
 
             print(f"  Noise proportion in results: {metrics['noise_proportion']*100:.1f}% ({len(recommended_noise)}/{len(recommended)} tools)")
 
-        print(f"  Precision: {metrics['precision']:.3f}, Recall: {metrics['recall']:.3f}, F1: {metrics['f1_score']:.3f}")
+        # Display both traditional and clearer metrics
+        print(f"  Traditional Metrics: Precision={metrics['precision']:.3f}, Recall={metrics['recall']:.3f}, F1={metrics['f1_score']:.3f}")
+        print(f"  Clearer Metrics: Relevance={metrics.get('relevance_precision', metrics['precision']):.3f} (% of returned that are relevant)")
+        print(f"                   Expected Recall={metrics.get('expected_recall', metrics['recall']):.3f} (% of expected that were found)")
+
+        # Display ranking metrics (these are what really matter!)
+        print(f"  🎯 Ranking Metrics:")
+        print(f"    MRR: {metrics.get('mrr', 0):.3f} (1/rank of first relevant)")
+        print(f"    NDCG@10: {metrics.get('ndcg@10', 0):.3f} (considers position + relevance)")
+        print(f"    P@1: {metrics.get('p@1', 0):.3f}, P@3: {metrics.get('p@3', 0):.3f}, P@5: {metrics.get('p@5', 0):.3f}")
+        if metrics.get('first_relevant_rank'):
+            print(f"    First relevant at position: {metrics['first_relevant_rank']}")
+
         if metrics.get('true_positives', 0) > 0:
             print(f"  Matches found: {metrics['true_positives']} tools")
         print(f"  Time: {metrics['total_time_ms']:.1f}ms")
@@ -610,9 +791,9 @@ class ToolBenchEvaluator:
                         try:
                             tool = self.convert_api_to_openai_format(api)
                             # Avoid duplicates based on tool name
-                            if tool.function.name not in seen_tool_names:
+                            if tool.name not in seen_tool_names:
                                 file_tools.append(tool)
-                                seen_tool_names.add(tool.function.name)
+                                seen_tool_names.add(tool.name)
                         except Exception as e:
                             # Skip tools that fail to convert
                             continue
@@ -763,7 +944,7 @@ class ToolBenchEvaluator:
 
         # Add sample noise tools to simulate realistic environment
         if add_noise_tools:
-            await self.create_sample_noise_tools(vector_store, embedding_service, num_tools=1500)
+            await self.create_sample_noise_tools(vector_store, embedding_service, num_tools=500)
 
         # Load pool of noise tools for available_tools if needed
         noise_tools_pool = []
@@ -817,22 +998,71 @@ class ToolBenchEvaluator:
                     result.get('query_id')
                 )
 
-        # Calculate aggregate metrics
+        # Calculate aggregate metrics (both traditional and cleaner)
         total_precision = sum(r["precision"] for r in results)
         total_recall = sum(r["recall"] for r in results)
         total_f1 = sum(r["f1_score"] for r in results)
+
+        # Calculate cleaner metrics
+        total_relevance_precision = sum(r.get("relevance_precision", r["precision"]) for r in results)
+        total_expected_recall = sum(r.get("expected_recall", r["recall"]) for r in results)
+        total_relevance_f1 = sum(r.get("relevance_f1", r["f1_score"]) for r in results)
+
+        # Calculate ranking metrics aggregates
+        total_mrr = sum(r.get("mrr", 0) for r in results)
+        total_ndcg_3 = sum(r.get("ndcg@3", 0) for r in results)
+        total_ndcg_5 = sum(r.get("ndcg@5", 0) for r in results)
+        total_ndcg_10 = sum(r.get("ndcg@10", 0) for r in results)
+        total_p_at_1 = sum(r.get("p@1", 0) for r in results)
+        total_p_at_3 = sum(r.get("p@3", 0) for r in results)
+        total_p_at_5 = sum(r.get("p@5", 0) for r in results)
+
+        # Track how many expected tools appear in top positions
+        total_expected_in_top3 = sum(r.get("expected_tools_in_top3", 0) for r in results)
+        total_expected_in_top5 = sum(r.get("expected_tools_in_top5", 0) for r in results)
+        total_expected_in_top10 = sum(r.get("expected_tools_in_top10", 0) for r in results)
+
+        # Track first relevant rank distribution
+        first_relevant_ranks = [r.get("first_relevant_rank", float('inf')) for r in results if r.get("first_relevant_rank", float('inf')) != float('inf')]
+
         total_time = sum(r["total_time_ms"] for r in results)
 
         num_results = len(results)
         avg_precision = total_precision / num_results
         avg_recall = total_recall / num_results
         avg_f1 = total_f1 / num_results
+
+        # Cleaner averages
+        avg_relevance_precision = total_relevance_precision / num_results
+        avg_expected_recall = total_expected_recall / num_results
+        avg_relevance_f1 = total_relevance_f1 / num_results
+
+        # Ranking metrics averages
+        avg_mrr = total_mrr / num_results
+        avg_ndcg_3 = total_ndcg_3 / num_results
+        avg_ndcg_5 = total_ndcg_5 / num_results
+        avg_ndcg_10 = total_ndcg_10 / num_results
+        avg_p_at_1 = total_p_at_1 / num_results
+        avg_p_at_3 = total_p_at_3 / num_results
+        avg_p_at_5 = total_p_at_5 / num_results
+
+        avg_expected_in_top3 = total_expected_in_top3 / num_results
+        avg_expected_in_top5 = total_expected_in_top5 / num_results
+        avg_expected_in_top10 = total_expected_in_top10 / num_results
+
+        avg_first_relevant_rank = sum(first_relevant_ranks) / len(first_relevant_ranks) if first_relevant_ranks else float('inf')
+
         avg_time = total_time / num_results
 
         # Calculate per-case statistics
         precisions = [r["precision"] for r in results]
         recalls = [r["recall"] for r in results]
         f1_scores = [r["f1_score"] for r in results]
+
+        # Cleaner statistics
+        relevance_precisions = [r.get("relevance_precision", r["precision"]) for r in results]
+        expected_recalls = [r.get("expected_recall", r["recall"]) for r in results]
+        relevance_f1_scores = [r.get("relevance_f1", r["f1_score"]) for r in results]
 
         # Calculate noise impact metrics if applicable
         noise_metrics = {}
@@ -866,6 +1096,7 @@ class ToolBenchEvaluator:
             "similarity_threshold": self.settings.primary_similarity_threshold,
             "timestamp": datetime.now().isoformat(),
             "metrics": {
+                # Traditional metrics (may be misleading with noise)
                 "avg_precision": avg_precision,
                 "avg_recall": avg_recall,
                 "avg_f1_score": avg_f1,
@@ -874,7 +1105,29 @@ class ToolBenchEvaluator:
                 "min_recall": min(recalls),
                 "max_recall": max(recalls),
                 "min_f1": min(f1_scores),
-                "max_f1": max(f1_scores)
+                "max_f1": max(f1_scores),
+                # Cleaner metrics (better with noise)
+                "avg_relevance_precision": avg_relevance_precision,
+                "avg_expected_recall": avg_expected_recall,
+                "avg_relevance_f1": avg_relevance_f1,
+                "min_relevance_precision": min(relevance_precisions),
+                "max_relevance_precision": max(relevance_precisions),
+                "min_expected_recall": min(expected_recalls),
+                "max_expected_recall": max(expected_recalls),
+                "min_relevance_f1": min(relevance_f1_scores),
+                "max_relevance_f1": max(relevance_f1_scores),
+                # Ranking metrics (CRITICAL for quality assessment)
+                "avg_mrr": avg_mrr,
+                "avg_ndcg@3": avg_ndcg_3,
+                "avg_ndcg@5": avg_ndcg_5,
+                "avg_ndcg@10": avg_ndcg_10,
+                "avg_p@1": avg_p_at_1,
+                "avg_p@3": avg_p_at_3,
+                "avg_p@5": avg_p_at_5,
+                "avg_expected_in_top3": avg_expected_in_top3,
+                "avg_expected_in_top5": avg_expected_in_top5,
+                "avg_expected_in_top10": avg_expected_in_top10,
+                "avg_first_relevant_rank": avg_first_relevant_rank if avg_first_relevant_rank != float('inf') else None
             },
             "timing": {
                 "avg_total_time_ms": avg_time,
@@ -900,10 +1153,26 @@ class ToolBenchEvaluator:
         print(f"Test Cases: {num_results}")
         print(f"Model: {self.settings.primary_embedding_model}")
         print(f"Threshold: {self.settings.primary_similarity_threshold}")
-        print(f"\nMetrics:")
+        print(f"\nTraditional Metrics (may be misleading with noise):")
         print(f"  Average Precision: {avg_precision:.3f}")
         print(f"  Average Recall: {avg_recall:.3f}")
         print(f"  Average F1 Score: {avg_f1:.3f}")
+
+        print(f"\nCleaner Metrics (better with noise):")
+        print(f"  Average Relevance Precision: {avg_relevance_precision:.3f} (% of returned that are relevant)")
+        print(f"  Average Expected Recall: {avg_expected_recall:.3f} (% of expected that were found)")
+        print(f"  Average Relevance F1: {avg_relevance_f1:.3f} (harmonic mean of above)")
+
+        print(f"\n🎯 Ranking Metrics (CRITICAL for quality assessment):")
+        print(f"  Average MRR: {avg_mrr:.3f} (Mean Reciprocal Rank - 1/rank of first relevant)")
+        print(f"  Average NDCG@10: {avg_ndcg_10:.3f} (considers both position and relevance)")
+        print(f"  Average NDCG@5: {avg_ndcg_5:.3f}, NDCG@3: {avg_ndcg_3:.3f}")
+        print(f"  Average P@1: {avg_p_at_1:.3f}, P@3: {avg_p_at_3:.3f}, P@5: {avg_p_at_5:.3f}")
+        print(f"  Average expected tools in top 3: {avg_expected_in_top3:.2f}")
+        print(f"  Average expected tools in top 5: {avg_expected_in_top5:.2f}")
+        print(f"  Average expected tools in top 10: {avg_expected_in_top10:.2f}")
+        if avg_first_relevant_rank != float('inf'):
+            print(f"  Average rank of first relevant: {avg_first_relevant_rank:.2f}")
 
         # Print noise impact if applicable
         if noise_metrics:
@@ -1076,10 +1345,10 @@ async def main():
     await evaluator.run_evaluation(
         test_file="G2_instruction.json",
         data_dir="toolbench_data/data/test_instruction",
-        num_cases=20,
+        num_cases=10,
         clear_collection=True,
-        add_noise_tools=False,  # Add noise to vector store
-        add_noise_to_available=0  # Add 100 noise tools to available_tools per test
+        add_noise_tools=True,  # Add noise to vector store
+        add_noise_to_available=100  # Add 100 noise tools to available_tools per test
     )
 
 

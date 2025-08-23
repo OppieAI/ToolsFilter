@@ -86,14 +86,14 @@ class SearchService:
 
         if self.enable_cross_encoder and self.cross_encoder:
             logger.info("Cross-encoder reranking enabled")
-        
+
         # LTR - use injected or create from config
         self.enable_ltr = getattr(self.config, 'enable_ltr', False)
         self.ltr_service = ltr_service
-        
+
         if self.enable_ltr and self.ltr_service is None:
             self.ltr_service = self._create_ltr_service()
-        
+
         if self.enable_ltr and self.ltr_service:
             logger.info("LTR ranking enabled")
 
@@ -127,7 +127,7 @@ class SearchService:
             logger.warning(f"Failed to initialize cross-encoder: {e}")
             self.enable_cross_encoder = False
             return None
-    
+
     def _create_ltr_service(self) -> Optional[LTRService]:
         """Factory method to create LTR service from config."""
         try:
@@ -246,10 +246,10 @@ class SearchService:
         # Extract tool names for filtering
         tool_names = []
         for tool in available_tools:
-            if hasattr(tool, 'function'):
-                tool_names.append(tool.function.name)
-            elif isinstance(tool, dict) and 'function' in tool:
-                tool_names.append(tool['function']['name'])
+            if hasattr(tool, 'name'):
+                tool_names.append(tool.name)
+            elif isinstance(tool, dict) and 'name' in tool:
+                tool_names.append(tool['name'])
             else:
                 logger.warning(f"Tool without function name: {tool}")
 
@@ -516,7 +516,7 @@ class SearchService:
         )
 
         return final_results
-    
+
     async def multi_criteria_search(
         self,
         query: str,
@@ -527,38 +527,38 @@ class SearchService:
     ) -> List[Dict[str, Any]]:
         """
         Two-phase retrieval: Cast wide net with multiple search criteria.
-        
+
         Args:
             query: Search query
             available_tools: List of available tools to search within
             query_embedding: Pre-computed query embedding
             semantic_limit: Limit for semantic search
             exact_match_boost: Whether to boost exact name matches
-            
+
         Returns:
             Combined, deduplicated candidates with scores
         """
         if not available_tools:
             return []
-        
+
         # Extract tool names for filtering
         tool_names = self._extract_tool_names(available_tools)
         base_filter = {"name": tool_names} if tool_names else None
-        
+
         all_candidates = {}  # Use dict for deduplication by tool_name
-        
+
         # Phase 1: Semantic search (understanding-based)
         logger.debug(f"Phase 1: Semantic search for top {semantic_limit}")
         if query_embedding is None:
             query_embedding = await self.embedding_service.embed_text(query)
-        
+
         semantic_results = await self.vector_store.search_similar_tools(
             query_embedding=query_embedding,
             filter_dict=base_filter,
             limit=semantic_limit,
             score_threshold=0.0  # Get all candidates
         )
-        
+
         for result in semantic_results:
             tool_name = result['tool_name']
             if tool_name not in all_candidates:
@@ -568,14 +568,14 @@ class SearchService:
             else:
                 all_candidates[tool_name]['match_types'].append('semantic')
                 all_candidates[tool_name]['semantic_score'] = result['score']
-        
+
         # Phase 2: Exact name matches (user knows what they want)
         query_lower = query.lower()
         query_words = set(query_lower.split())
-        
+
         logger.debug("Phase 2: Exact name matching")
         from qdrant_client.models import Filter, FieldCondition, MatchAny, MatchText
-        
+
         # Check for exact tool names in query
         exact_name_filter = Filter(
             must=[
@@ -585,7 +585,7 @@ class SearchService:
                 )
             ]
         )
-        
+
         # Find tools whose names appear in the query
         matching_names = []
         for tool_name in tool_names:
@@ -593,7 +593,7 @@ class SearchService:
             # Check if tool name appears in query
             if name_lower in query_lower or name_lower.replace('_', ' ') in query_lower:
                 matching_names.append(tool_name)
-        
+
         if matching_names:
             logger.debug(f"Found exact name matches: {matching_names}")
             exact_filter = Filter(
@@ -604,13 +604,13 @@ class SearchService:
                     )
                 ]
             )
-            
-            exact_results = await self.vector_store.client.scroll(
+
+            exact_results = self.vector_store.client.scroll(
                 collection_name=self.vector_store.collection_name,
                 scroll_filter=exact_filter,
                 limit=len(matching_names) * 2  # Get all matches
             )
-            
+
             if exact_results[0]:
                 for point in exact_results[0]:
                     tool_name = point.payload.get("name")
@@ -628,14 +628,14 @@ class SearchService:
                         all_candidates[tool_name]['match_types'].append('exact_name')
                         if exact_match_boost:
                             all_candidates[tool_name]['score'] = max(
-                                all_candidates[tool_name]['score'], 
+                                all_candidates[tool_name]['score'],
                                 0.95
                             )
-        
+
         # Phase 3: Parameter name matches (user mentions specific params)
         logger.debug("Phase 3: Parameter name matching")
         param_matches = []
-        
+
         # Look for parameter names in query
         for tool in available_tools:
             tool_name = self._get_tool_name_from_tool(tool)
@@ -648,7 +648,7 @@ class SearchService:
                         if param.lower() in query_lower:
                             param_matches.append(tool_name)
                             break
-        
+
         if param_matches:
             logger.debug(f"Found parameter matches: {param_matches[:10]}")  # Log first 10
             param_filter = Filter(
@@ -659,13 +659,13 @@ class SearchService:
                     )
                 ]
             )
-            
-            param_results = await self.vector_store.client.scroll(
+
+            param_results = self.vector_store.client.scroll(
                 collection_name=self.vector_store.collection_name,
                 scroll_filter=param_filter,
                 limit=len(param_matches)
             )
-            
+
             if param_results[0]:
                 for point in param_results[0]:
                     tool_name = point.payload.get("name")
@@ -681,14 +681,14 @@ class SearchService:
                         }
                     else:
                         all_candidates[tool_name]['match_types'].append('param_match')
-        
+
         # Phase 4: Description keyword matches (fallback for missed tools)
         # This could be expensive, so only do for tools not yet found
         missing_tools = [name for name in tool_names if name not in all_candidates]
-        
+
         if missing_tools and len(missing_tools) < 100:  # Limit to avoid performance issues
             logger.debug(f"Phase 4: Checking {len(missing_tools)} missing tools for description matches")
-            
+
             # Use searchable_text field if we have it
             keyword_filter = Filter(
                 must=[
@@ -698,13 +698,13 @@ class SearchService:
                     )
                 ]
             )
-            
-            keyword_results = await self.vector_store.client.scroll(
+
+            keyword_results = self.vector_store.client.scroll(
                 collection_name=self.vector_store.collection_name,
                 scroll_filter=keyword_filter,
                 limit=len(missing_tools)
             )
-            
+
             if keyword_results[0]:
                 for point in keyword_results[0]:
                     # Check if description contains query keywords
@@ -721,11 +721,11 @@ class SearchService:
                                 'original': point.payload.get("original"),
                                 'match_types': ['description_match']
                             }
-        
+
         # Convert to list and sort by score
         candidates = list(all_candidates.values())
         candidates.sort(key=lambda x: x.get('score', 0), reverse=True)
-        
+
         logger.info(
             f"Multi-criteria search found {len(candidates)} candidates: "
             f"{sum(1 for c in candidates if 'semantic' in c.get('match_types', []))} semantic, "
@@ -733,35 +733,32 @@ class SearchService:
             f"{sum(1 for c in candidates if 'param_match' in c.get('match_types', []))} param, "
             f"{sum(1 for c in candidates if 'description_match' in c.get('match_types', []))} description"
         )
-        
+
         return candidates
-    
+
     def _get_tool_name_from_tool(self, tool: Any) -> str:
         """Extract tool name from tool object."""
-        if hasattr(tool, 'function'):
-            return tool.function.name
+        if hasattr(tool, 'name'):
+            return tool.name
         elif isinstance(tool, dict):
-            if tool.get("type") == "function":
-                if "function" in tool:
-                    return tool["function"].get("name", "")
-                else:
-                    return tool.get("name", "")
             return tool.get("name", tool.get("tool_name", ""))
         return ""
-    
+
     def _get_tool_parameters(self, tool: Any) -> Dict[str, Any]:
         """Extract parameters from tool object."""
-        if hasattr(tool, 'function'):
-            return tool.function.parameters if hasattr(tool.function, 'parameters') else {}
+        if hasattr(tool, 'parameters'):
+            params = tool.parameters
+            # Convert ToolParameters object to dict if needed
+            if params and hasattr(params, 'model_dump'):
+                return params.model_dump()
+            elif params and hasattr(params, 'dict'):
+                return params.dict()
+            else:
+                return params if params else {}
         elif isinstance(tool, dict):
-            if tool.get("type") == "function":
-                if "function" in tool:
-                    return tool["function"].get("parameters", {})
-                else:
-                    return tool.get("parameters", {})
             return tool.get("parameters", {})
         return {}
-    
+
     async def ltr_search(
         self,
         query: Optional[str] = None,
@@ -773,7 +770,7 @@ class SearchService:
     ) -> List[Dict[str, Any]]:
         """
         Search using Learning to Rank model with multi-criteria candidate retrieval.
-        
+
         Args:
             query: Search query
             messages: Conversation messages
@@ -781,7 +778,7 @@ class SearchService:
             query_embedding: Pre-computed query embedding (optional)
             limit: Final number of results
             candidate_limit: Number of candidates to get for LTR
-            
+
         Returns:
             List of tools ranked by LTR model
         """
@@ -791,13 +788,13 @@ class SearchService:
                 query=query, messages=messages, query_embedding=query_embedding,
                 available_tools=available_tools, limit=limit
             )
-        
+
         # Extract query if not provided
         if query is None and messages:
             query = " ".join(msg["content"] for msg in messages if msg.get("role") == "user")
         if query is None:
             raise ValueError("Must provide either query or messages for LTR")
-        
+
         # Use multi-criteria search to get broader candidate pool
         candidates = await self.multi_criteria_search(
             query=query,
@@ -806,16 +803,16 @@ class SearchService:
             semantic_limit=candidate_limit,
             exact_match_boost=True
         )
-        
+
         # Apply LTR ranking to the broader candidate set
         ranked = await self.ltr_service.rank_tools(
             query=query,
             candidates=candidates,
             top_k=limit
         )
-        
+
         return ranked
-    
+
     async def hybrid_ltr_search(
         self,
         query: Optional[str] = None,
@@ -827,13 +824,13 @@ class SearchService:
     ) -> List[Dict[str, Any]]:
         """
         Advanced pipeline: Multi-criteria + BM25 + Cross-encoder + LTR.
-        
+
         Four-stage pipeline:
         1. Multi-criteria search (semantic + exact + param + description)
         2. BM25 scoring on candidates
         3. Cross-encoder reranking (if enabled)
         4. LTR final ranking
-        
+
         Args:
             query: Search query
             messages: Conversation messages
@@ -841,7 +838,7 @@ class SearchService:
             query_embedding: Pre-computed query embedding (optional)
             limit: Final number of results
             candidate_limit: Number of candidates to get for LTR
-            
+
         Returns:
             List of tools ranked by LTR model
         """
@@ -851,13 +848,13 @@ class SearchService:
                 query=query, messages=messages, available_tools=available_tools,
                 query_embedding=query_embedding, limit=limit
             )
-        
+
         # Extract query if not provided
         if query is None and messages:
             query = " ".join(msg["content"] for msg in messages if msg.get("role") == "user")
         if query is None:
             raise ValueError("Must provide either query or messages for LTR")
-        
+
         # Stage 1: Multi-criteria search for broad candidate pool
         candidates = await self.multi_criteria_search(
             query=query,
@@ -866,39 +863,42 @@ class SearchService:
             semantic_limit=candidate_limit,
             exact_match_boost=True
         )
-        
+
         # Stage 2: Add BM25 scores if enabled
         if self.enable_bm25 and self.bm25_ranker and candidates:
-            # Convert candidates to format expected by BM25
+            # Convert candidates to Tool objects for BM25
+            from src.core.models import Tool, ToolParameters
             candidate_tools = []
             for c in candidates:
-                if 'original' in c and c['original']:
-                    candidate_tools.append(c['original'])
+                # Create Tool object from candidate dict
+                params = c.get('parameters')
+                if params and isinstance(params, dict) and params:
+                    tool_params = ToolParameters(**params)
                 else:
-                    # Reconstruct tool format
-                    tool = {
-                        'type': 'function',
-                        'name': c.get('tool_name', ''),
-                        'description': c.get('description', ''),
-                        'parameters': c.get('parameters', {})
-                    }
-                    candidate_tools.append(tool)
-            
+                    tool_params = {}
+                
+                tool_obj = Tool(
+                    name=c.get('tool_name', c.get('name', '')),
+                    description=c.get('description', ''),
+                    parameters=tool_params
+                )
+                candidate_tools.append(tool_obj)
+
             # Get BM25 scores
             bm25_scores = self.bm25_ranker.score_tools(query, candidate_tools)
-            
+
             # Add BM25 scores to candidates
             for c in candidates:
                 tool_name = c.get('tool_name', '')
                 c['bm25_score'] = bm25_scores.get(tool_name, 0.0)
-                
+
                 # Update combined score if BM25 is significant
                 if c['bm25_score'] > 0.5:
                     # Weighted combination
                     semantic = c.get('semantic_score', c.get('score', 0))
                     c['hybrid_score'] = (0.7 * semantic + 0.3 * c['bm25_score'])
                     c['score'] = c['hybrid_score']
-        
+
         # Stage 3: Optional cross-encoder reranking
         if self.enable_cross_encoder and self.cross_encoder and len(candidates) > 20:
             # Only rerank if we have many candidates
@@ -907,20 +907,20 @@ class SearchService:
                 candidates=candidates,
                 top_k=min(candidate_limit, len(candidates))
             )
-        
+
         # Stage 4: LTR final ranking
         ranked = await self.ltr_service.rank_tools(
             query=query,
             candidates=candidates,
             top_k=limit
         )
-        
+
         logger.info(
             f"Hybrid-LTR pipeline: {len(available_tools) if available_tools else 'all'} tools -> "
             f"{len(candidates)} multi-criteria -> "
             f"{len(ranked)} final LTR ranked"
         )
-        
+
         return ranked
 
     async def search(
@@ -948,6 +948,15 @@ class SearchService:
         Returns:
             List of ranked tools
         """
+        # Debug logging
+        logger.info(f"[DEBUG] Search called with:")
+        logger.info(f"  - strategy: {strategy.value}")
+        logger.info(f"  - limit: {limit}")
+        logger.info(f"  - score_threshold: {score_threshold}")
+        logger.info(f"  - available_tools count: {len(available_tools) if available_tools else 0}")
+        logger.info(f"  - messages: {len(messages) if messages else 0} messages")
+        logger.info(f"  - query: {query[:100] if query else 'None'}...")
+        
         logger.info(f"Searching with strategy: {strategy.value}")
 
         if strategy == SearchStrategy.SEMANTIC:
@@ -1001,7 +1010,7 @@ class SearchService:
                 limit=limit,
                 score_threshold=score_threshold
             )
-        
+
         elif strategy == SearchStrategy.LTR:
             return await self.ltr_search(
                 query=query,
@@ -1010,7 +1019,7 @@ class SearchService:
                 query_embedding=query_embedding,
                 limit=limit
             )
-        
+
         elif strategy == SearchStrategy.HYBRID_LTR:
             return await self.hybrid_ltr_search(
                 query=query,
@@ -1027,10 +1036,10 @@ class SearchService:
         """Extract tool names from various tool formats."""
         tool_names = []
         for tool in tools:
-            if hasattr(tool, 'function'):
-                tool_names.append(tool.function.name)
-            elif isinstance(tool, dict) and 'function' in tool:
-                tool_names.append(tool['function']['name'])
+            if hasattr(tool, 'name'):
+                tool_names.append(tool.name)
+            elif isinstance(tool, dict) and 'name' in tool:
+                tool_names.append(tool['name'])
             elif isinstance(tool, dict) and 'tool_name' in tool:
                 tool_names.append(tool['tool_name'])
             elif isinstance(tool, dict) and 'name' in tool:
@@ -1051,10 +1060,10 @@ class SearchService:
 
             if self.enable_bm25:
                 strategies.append(SearchStrategy.HYBRID_CROSS_ENCODER)
-        
+
         if self.enable_ltr:
             strategies.append(SearchStrategy.LTR)
-            
+
             if self.enable_bm25:
                 strategies.append(SearchStrategy.HYBRID_LTR)
 
@@ -1071,7 +1080,7 @@ class SearchService:
 
         if self.cross_encoder:
             stats["cross_encoder_cache"] = self.cross_encoder.get_cache_stats()
-        
+
         if self.ltr_service:
             stats["ltr_stats"] = self.ltr_service.get_stats()
 

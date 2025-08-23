@@ -120,7 +120,7 @@ async def filter_tools(
         tool_texts = []
         
         for tool in request.available_tools:
-            tool_name = tool.function.name if tool.type == "function" else tool.dict().get("name", "unknown")
+            tool_name = tool.name if hasattr(tool, 'name') else tool.dict().get("name", "unknown")
             
             # Check if tool already exists in primary store
             existing_tool = await vector_store.get_tool_by_name(tool_name)
@@ -150,8 +150,8 @@ async def filter_tools(
         # Extract available tool names for filtering
         available_tool_names = []
         for tool in request.available_tools:
-            if tool.type == "function" and tool.function:
-                available_tool_names.append(tool.function.name)
+            if hasattr(tool, 'name'):
+                available_tool_names.append(tool.name)
             else:
                 # Fallback for other tool types
                 tool_dict = tool.dict() if hasattr(tool, 'dict') else tool

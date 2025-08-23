@@ -16,19 +16,23 @@ class TestModels:
                 "type": "object",
                 "properties": {
                     "pattern": {"type": "string"}
-                }
+                },
+                "required": ["pattern"]
             }
         )
         
         assert tool.type == "function"
-        assert tool.function.name == "grep"
-        assert tool.function.description == "Search for patterns"
-        assert tool.function.parameters == {
+        assert tool.name == "grep"
+        assert tool.description == "Search for patterns"
+        assert tool.parameters == {
             "type": "object",
             "properties": {
                 "pattern": {"type": "string"}
-            }
+            },
+            "required": ["pattern"],
+            "additionalProperties": False
         }
+        assert tool.strict == True
     
     def test_tool_filter_request_validation(self):
         """Test ToolFilterRequest validation."""
@@ -38,13 +42,12 @@ class TestModels:
                 {"role": "user", "content": "Hello"}
             ],
             available_tools=[
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "test",
-                        "description": "Test tool"
-                    }
-                }
+                Tool(
+                    type="function",
+                    name="test",
+                    description="Test tool",
+                    parameters={"type": "object", "properties": {}}
+                )
             ]
         )
         
@@ -59,13 +62,12 @@ class TestModels:
             ToolFilterRequest(
                 messages=[],  # Empty messages
                 available_tools=[
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": "test",
-                            "description": "Test tool"
-                        }
-                    }
+                    Tool(
+                        type="function",
+                        name="test",
+                        description="Test tool",
+                        parameters={"type": "object", "properties": {}}
+                    )
                 ]
             )
     

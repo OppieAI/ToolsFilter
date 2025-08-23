@@ -15,6 +15,8 @@ services:
       # Mount source code for hot reloading
       - ./src:/app/src
       - ./tests:/app/tests
+      - ./scripts:/app/scripts
+      - ./data:/app/data
       # Prevent overwriting installed packages
       - /app/.venv
     command: ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

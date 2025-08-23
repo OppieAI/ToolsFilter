@@ -172,7 +172,7 @@ class Settings(BaseSettings):
 
     # LTR (Learning to Rank) Configuration
     enable_ltr: bool = Field(
-        default=False,
+        default=True,
         description="Enable Learning to Rank model (disabled by default until trained)"
     )
     ltr_model_path: str = Field(
@@ -195,7 +195,7 @@ class Settings(BaseSettings):
         default=1000,
         description="Number of new evaluations before triggering retraining"
     )
-    
+
     # LTR Feature Configuration
     ltr_similarity_features: bool = Field(
         default=True,
@@ -221,7 +221,7 @@ class Settings(BaseSettings):
         default=True,
         description="Include metadata features in LTR"
     )
-    
+
     # LTR Training Configuration
     ltr_learning_rate: float = Field(
         default=0.1,

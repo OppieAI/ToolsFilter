@@ -26,7 +26,7 @@ settings = get_settings()
 
 class VectorStoreService:
     """Service for managing vector embeddings in Qdrant."""
-    
+
     def __init__(self, embedding_dimension: Optional[int] = None, model_name: Optional[str] = None, similarity_threshold: Optional[float] = None):
         """Initialize Qdrant client."""
         self.client = QdrantClient(
@@ -40,7 +40,7 @@ class VectorStoreService:
         self.collection_name = f"{settings.qdrant_collection_name}_{model_suffix}"
         self.embedding_dimension = embedding_dimension or 1536  # Will be set dynamically
         self.similarity_threshold = similarity_threshold or 0.7
-        
+
         # Initialize optimizer and cache
         self.optimizer = QdrantOptimizer(self.client)
         self.search_cache = SearchCache(
@@ -49,14 +49,14 @@ class VectorStoreService:
         )
         self.use_two_stage_search = getattr(settings, 'enable_two_stage_search', True)
         self.two_stage_threshold = getattr(settings, 'two_stage_threshold', 1000)
-        
+
     async def initialize(self):
         """Initialize vector store and create collections if needed."""
         try:
             # Check if collection exists
             collections = self.client.get_collections().collections
             collection_names = [col.name for col in collections]
-            
+
             if self.collection_name not in collection_names:
                 # Get optimized collection parameters
                 # Start with expected size of 1000, will re-optimize later
@@ -65,7 +65,7 @@ class VectorStoreService:
                     embedding_dim=self.embedding_dimension,
                     optimize_for="balanced"
                 )
-                
+
                 # Create collection for tools with optimized metadata
                 self.client.create_collection(
                     collection_name=self.collection_name,
@@ -114,7 +114,7 @@ class VectorStoreService:
                 except Exception:
                     pass  # Metadata point might not exist in older collections
                 logger.info(f"Collection {self.collection_name} already exists")
-                
+
             # Create collection for historical patterns (future use)
             patterns_collection = f"{self.collection_name}_patterns"
             if patterns_collection not in collection_names:
@@ -145,11 +145,11 @@ class VectorStoreService:
                     ]
                 )
                 logger.info(f"Created collection: {patterns_collection}")
-                
+
         except Exception as e:
             logger.error(f"Failed to initialize vector store: {e}")
             raise
-    
+
     async def index_tool(
         self,
         tool_name: str,
@@ -158,17 +158,17 @@ class VectorStoreService:
     ) -> str:
         """
         Index a single tool in the vector store.
-        
+
         Args:
             tool_name: Name of the tool
             tool_embedding: Embedding vector
             tool_metadata: Additional metadata about the tool
-            
+
         Returns:
             ID of the indexed point
         """
         point_id = str(uuid4())
-        
+
         try:
             self.client.upsert(
                 collection_name=self.collection_name,
@@ -185,11 +185,11 @@ class VectorStoreService:
             )
             logger.debug(f"Indexed tool: {tool_name}")
             return point_id
-            
+
         except Exception as e:
             logger.error(f"Failed to index tool {tool_name}: {e}")
             raise
-    
+
     async def index_tools_batch(
         self,
         tools: List[Dict[str, Any]],
@@ -197,17 +197,17 @@ class VectorStoreService:
     ) -> List[str]:
         """
         Index multiple tools in batch.
-        
+
         Args:
             tools: List of tool definitions
             embeddings: Corresponding embedding vectors
-            
+
         Returns:
             List of indexed point IDs
         """
         if len(tools) != len(embeddings):
             raise ValueError("Number of tools and embeddings must match")
-        
+
         # Use optimizer for large batches
         if len(tools) > 100:
             try:
@@ -218,7 +218,7 @@ class VectorStoreService:
                     batch_size=100
                 )
                 logger.info(f"Indexed {indexed_count} tools using optimizer")
-                
+
                 # After large batch, optimize collection if needed
                 collection_info = self.client.get_collection(self.collection_name)
                 if collection_info.points_count > 5000:
@@ -226,21 +226,21 @@ class VectorStoreService:
                         self.collection_name,
                         target_mode="balanced"
                     )
-                
+
                 return [str(uuid4()) for _ in range(indexed_count)]
             except Exception as e:
                 logger.warning(f"Failed to use optimized bulk indexing: {e}, falling back to standard")
-        
+
         # Standard indexing for smaller batches
         points = []
         point_ids = []
-        
+
         for tool, embedding in zip(tools, embeddings):
             point_id = str(uuid4())
             point_ids.append(point_id)
-            
+
             # Extract tool information
-            # Handle both formats: 
+            # Handle both formats:
             # 1. Flat format: {type: "function", name: "...", description: "...", parameters: {...}}
             # 2. Nested format: {type: "function", function: {name: "...", ...}}
             if tool.get("type") == "function":
@@ -259,16 +259,16 @@ class VectorStoreService:
                 name = tool.get("name", "unknown")
                 description = tool.get("description", "")
                 parameters = tool.get("parameters", {})
-            
+
             # Enhanced payload with more searchable fields
             param_props = parameters.get("properties", {}) if parameters else {}
             param_names = list(param_props.keys()) if param_props else []
             required_params = parameters.get("required", []) if parameters else []
-            
+
             # Tokenize for better text search
             name_tokens = name.lower().replace("_", " ").replace("-", " ").split()
             desc_tokens = description.lower().split() if description else []
-            
+
             points.append(
                 PointStruct(
                     id=point_id,
@@ -280,7 +280,7 @@ class VectorStoreService:
                         "parameters": parameters,
                         "category": tool.get("category", "general"),
                         "original": tool,  # Store original tool definition
-                        
+
                         # Enhanced searchable fields
                         "name_lowercase": name.lower(),
                         "name_tokens": name_tokens,
@@ -289,13 +289,13 @@ class VectorStoreService:
                         "required_params": required_params,
                         "param_count": len(param_names),
                         "has_required_params": len(required_params) > 0,
-                        
+
                         # Combined searchable text for full-text search
                         "searchable_text": f"{name} {description} {' '.join(param_names)}".lower()
                     }
                 )
             )
-        
+
         try:
             self.client.upsert(
                 collection_name=self.collection_name,
@@ -303,11 +303,11 @@ class VectorStoreService:
             )
             logger.info(f"Indexed {len(points)} tools in batch")
             return point_ids
-            
+
         except Exception as e:
             logger.error(f"Failed to index tools batch: {e}")
             raise
-    
+
     async def search_similar_tools(
         self,
         query_embedding: List[float],
@@ -317,13 +317,13 @@ class VectorStoreService:
     ) -> List[Dict[str, Any]]:
         """
         Search for similar tools based on embedding.
-        
+
         Args:
             query_embedding: Query embedding vector
             limit: Maximum number of results
             score_threshold: Minimum similarity score
             filter_dict: Optional filters
-            
+
         Returns:
             List of similar tools with scores
         """
@@ -332,12 +332,12 @@ class VectorStoreService:
         if cached_results is not None:
             logger.debug("Returning cached search results")
             return cached_results[:limit]
-        
+
         # Use two-stage search if enabled and collection is large
         try:
             collection_info = self.client.get_collection(self.collection_name)
             collection_size = collection_info.points_count
-            
+
             if self.use_two_stage_search and collection_size > self.two_stage_threshold:
                 # Use optimized two-stage search for large collections
                 results = await self.optimizer.two_stage_search(
@@ -349,13 +349,13 @@ class VectorStoreService:
                     stage1_mode=SearchMode.FAST,
                     stage2_mode=SearchMode.ACCURATE
                 )
-                
+
                 # Cache the results
                 self.search_cache.set(query_embedding, filter_dict, results)
                 return results
         except Exception as e:
             logger.warning(f"Failed to use two-stage search, falling back to standard search: {e}")
-        
+
         try:
             # Build filter if provided
             qdrant_filter = None
@@ -380,13 +380,13 @@ class VectorStoreService:
                             )
                         )
                 qdrant_filter = Filter(must=conditions)
-            
+
             # Build filter to exclude metadata points
             metadata_condition = FieldCondition(
                 key="_type",
                 match=MatchValue(value="metadata")
             )
-            
+
             if qdrant_filter:
                 # Add to existing filter
                 qdrant_filter.must_not = qdrant_filter.must_not or []
@@ -394,7 +394,7 @@ class VectorStoreService:
             else:
                 # Create new filter
                 qdrant_filter = Filter(must_not=[metadata_condition])
-            
+
             # Perform search
             # Use provided threshold, or fall back to instance threshold
             # Note: score_threshold=0.0 should be valid (no threshold)
@@ -402,7 +402,7 @@ class VectorStoreService:
                 threshold = score_threshold
             else:
                 threshold = self.similarity_threshold
-                
+
             # For score_threshold=0.0, we want ALL results, so don't pass any threshold
             # Only apply threshold if it's explicitly > 0
             search_params = {
@@ -411,21 +411,21 @@ class VectorStoreService:
                 "limit": limit,
                 "query_filter": qdrant_filter
             }
-            
+
             # Only add score_threshold if it's positive
             if threshold is not None and threshold > 0:
                 search_params["score_threshold"] = threshold
-                
+
             results = self.client.search(**search_params)
-            
+
             # Debug: If we have a filter, check if we're getting all expected results
             if filter_dict and "name" in filter_dict:
                 expected_names = filter_dict["name"]
                 found_names = [r.payload.get("name") for r in results]
                 missing = [n for n in expected_names if n not in found_names]
                 if missing:
-                    logger.warning(f"Qdrant search missed {len(missing)}/{len(expected_names)} tools despite filter: {missing}")
-            
+                    logger.warning(f"Qdrant search missed {len(missing)}/{len(expected_names)} tools despite filter. It could be because of limit as well {limit}. Sample names: {missing[:5]}")
+
             # Format results
             similar_tools = []
             for result in results:
@@ -438,20 +438,20 @@ class VectorStoreService:
                     "original": result.payload.get("original")
                 }
                 similar_tools.append(tool_info)
-            
+
             return similar_tools
-            
+
         except Exception as e:
             logger.error(f"Failed to search similar tools: {e}")
             raise
-    
+
     async def get_tool_by_name(self, tool_name: str) -> Optional[Dict[str, Any]]:
         """
         Get a specific tool by name.
-        
+
         Args:
             tool_name: Name of the tool
-            
+
         Returns:
             Tool information if found
         """
@@ -468,7 +468,7 @@ class VectorStoreService:
                 ),
                 limit=1
             )
-            
+
             if results[0]:
                 point = results[0][0]
                 return {
@@ -479,20 +479,20 @@ class VectorStoreService:
                     "category": point.payload.get("category"),
                     "original": point.payload.get("original")
                 }
-            
+
             return None
-            
+
         except Exception as e:
             logger.error(f"Failed to get tool by name {tool_name}: {e}")
             raise
-    
+
     async def delete_tool(self, tool_name: str) -> bool:
         """
         Delete a tool from the vector store.
-        
+
         Args:
             tool_name: Name of the tool to delete
-            
+
         Returns:
             True if deleted successfully
         """
@@ -510,11 +510,11 @@ class VectorStoreService:
             )
             logger.info(f"Deleted tool: {tool_name}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to delete tool {tool_name}: {e}")
             return False
-    
+
     async def update_tool_metadata(
         self,
         tool_name: str,
@@ -522,11 +522,11 @@ class VectorStoreService:
     ) -> bool:
         """
         Update metadata for a tool.
-        
+
         Args:
             tool_name: Name of the tool
             metadata: New metadata to merge
-            
+
         Returns:
             True if updated successfully
         """
@@ -536,21 +536,21 @@ class VectorStoreService:
             if not tool:
                 logger.warning(f"Tool not found: {tool_name}")
                 return False
-            
+
             # Update payload
             self.client.update_payload(
                 collection_name=self.collection_name,
                 payload=metadata,
                 points=[tool["id"]]
             )
-            
+
             logger.info(f"Updated metadata for tool: {tool_name}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to update tool metadata {tool_name}: {e}")
             return False
-    
+
     async def get_collection_info(self) -> Dict[str, Any]:
         """Get information about the collection."""
         try:
@@ -563,7 +563,7 @@ class VectorStoreService:
                 "segments_count": len(getattr(info, 'segments', [])),
                 "config": {}
             }
-            
+
             # Try to get metadata
             try:
                 metadata_id = "00000000-0000-0000-0000-000000000001"
@@ -573,17 +573,17 @@ class VectorStoreService:
                 )
                 if metadata_points:
                     result["metadata"] = {
-                        k: v for k, v in metadata_points[0].payload.items() 
+                        k: v for k, v in metadata_points[0].payload.items()
                         if k != "_type"
                     }
             except Exception:
                 pass  # Metadata might not exist
-                
+
             return result
         except Exception as e:
             logger.error(f"Failed to get collection info: {e}")
             raise
-    
+
     async def health_check(self) -> bool:
         """Check if vector store is healthy."""
         try:
@@ -593,20 +593,20 @@ class VectorStoreService:
         except Exception as e:
             logger.error(f"Vector store health check failed: {e}")
             return False
-    
+
     async def list_collections(self) -> List[Dict[str, Any]]:
         """List all collections with their metadata."""
         try:
             collections = self.client.get_collections().collections
             collection_info = []
-            
+
             for col in collections:
                 info = {
                     "name": col.name,
                     "vectors_count": getattr(col, 'vectors_count', 0),
                     "points_count": getattr(col, 'points_count', 0)
                 }
-                
+
                 # Try to get metadata for each collection
                 try:
                     # Try both old and new metadata IDs for compatibility
@@ -624,19 +624,19 @@ class VectorStoreService:
                             continue
                     if metadata_points:
                         info["metadata"] = {
-                            k: v for k, v in metadata_points[0].payload.items() 
+                            k: v for k, v in metadata_points[0].payload.items()
                             if k != "_type"
                         }
                 except Exception:
                     pass  # Metadata might not exist
-                
+
                 collection_info.append(info)
-            
+
             return collection_info
         except Exception as e:
             logger.error(f"Failed to list collections: {e}")
             raise
-    
+
     async def get_performance_stats(self) -> Dict[str, Any]:
         """Get performance statistics from optimizer and cache."""
         stats = {
@@ -644,19 +644,19 @@ class VectorStoreService:
             "cache": self.search_cache.get_stats()
         }
         return stats
-    
+
     async def clear_cache(self):
         """Clear the search cache."""
         self.search_cache.clear()
         logger.info("Search cache cleared")
-    
+
     async def optimize_collection(self, target_mode: str = "balanced") -> bool:
         """
         Optimize the current collection configuration.
-        
+
         Args:
             target_mode: "speed", "accuracy", or "balanced"
-            
+
         Returns:
             True if optimization successful
         """
@@ -664,7 +664,7 @@ class VectorStoreService:
             self.collection_name,
             target_mode
         )
-    
+
     async def close(self):
         """Close the vector store connection."""
         # Qdrant client doesn't require explicit closing

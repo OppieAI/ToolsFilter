@@ -436,9 +436,14 @@ class QdrantOptimizer:
                 
                 # Extract tool information
                 if tool.get("type") == "function":
-                    function = tool.get("function", {})
-                    name = function.get("name", "unknown")
-                    description = function.get("description", "")
+                    # Handle both old nested and new flat structure
+                    if "function" in tool:
+                        function = tool.get("function", {})
+                        name = function.get("name", "unknown")
+                        description = function.get("description", "")
+                    else:
+                        name = tool.get("name", "unknown")
+                        description = tool.get("description", "")
                 else:
                     name = tool.get("name", "unknown")
                     description = tool.get("description", "")

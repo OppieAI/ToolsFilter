@@ -110,7 +110,7 @@ class BM25Ranker:
         parts = []
 
         # Function name gets highest weight (repeat 3x for emphasis)
-        func_name = tool.function.name
+        func_name = tool.name
         parts.extend([func_name] * 3)
 
         # Split snake_case/camelCase names for better matching
@@ -120,12 +120,16 @@ class BM25Ranker:
         parts.append(name_parts)
 
         # Description (medium weight)
-        if tool.function.description:
-            parts.append(tool.function.description)
+        if tool.description:
+            parts.append(tool.description)
 
         # Parameter names and descriptions (lower weight)
-        if tool.function.parameters:
-            properties = tool.function.parameters.get("properties", {})
+        if tool.parameters:
+            # Handle both dict and ToolParameters objects
+            if isinstance(tool.parameters, dict):
+                properties = tool.parameters.get("properties", {})
+            else:
+                properties = tool.parameters.properties if hasattr(tool.parameters, 'properties') else {}
             for param_name, param_info in properties.items():
                 parts.append(param_name)
                 if isinstance(param_info, dict):
@@ -155,7 +159,7 @@ class BM25Ranker:
         query_tokens = self._preprocess_text(query)
         if not query_tokens:
             logger.warning(f"Query '{query}' resulted in no tokens after preprocessing")
-            return {tool.function.name: 0.0 for tool in available_tools}
+            return {tool.name: 0.0 for tool in available_tools}
 
         # Build corpus from available tools
         corpus_texts = []
@@ -164,7 +168,7 @@ class BM25Ranker:
         for tool in available_tools:
             text = self._tool_to_searchable_text(tool)
             corpus_texts.append(text)
-            tool_names.append(tool.function.name)
+            tool_names.append(tool.name)
 
         # Tokenize corpus
         tokenized_corpus = [self._preprocess_text(text) for text in corpus_texts]
@@ -233,7 +237,7 @@ class BM25Ranker:
         for tool in available_tools:
             text = self._tool_to_searchable_text(tool)
             corpus_texts.append(text)
-            tool_names.append(tool.function.name)
+            tool_names.append(tool.name)
 
         # Tokenize corpus once
         tokenized_corpus = [self._preprocess_text(text) for text in corpus_texts]
@@ -323,7 +327,7 @@ class HybridScorer:
         # Merge scores
         merged_results = []
         for tool in available_tools:
-            tool_name = tool.function.name
+            tool_name = tool.name
 
             # Get individual scores
             semantic_score = semantic_lookup.get(tool_name, 0.0)

@@ -113,6 +113,7 @@ class LTRTrainer:
             reg_lambda=self.config['reg_lambda'],
             random_state=self.config['seed'],
             n_jobs=self.config['n_jobs'],
+            early_stopping_rounds=early_stopping_rounds if early_stopping_rounds else None,
         )
         
         # Train model
@@ -120,11 +121,9 @@ class LTRTrainer:
         self.model.fit(
             X_train, y_train,
             group=groups_train,
-            eval_set=[(X_val, y_val)],
-            eval_group=[groups_val],
-            early_stopping_rounds=early_stopping_rounds,
-            verbose=False,
-            callbacks=[self._log_callback]
+            eval_set=[(X_val, y_val)] if X_val is not None else None,
+            eval_group=[groups_val] if groups_val is not None else None,
+            verbose=False
         )
         
         # Calculate feature importance
@@ -485,8 +484,3 @@ class LTRTrainer:
             groups.append(np.sum(selected_groups == g))
         
         return groups
-    
-    def _log_callback(self, env):
-        """Callback for logging during training."""
-        if env.iteration % 10 == 0:
-            logger.debug(f"Iteration {env.iteration}: {env.evaluation_result_list}")

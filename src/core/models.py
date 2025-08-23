@@ -13,35 +13,81 @@ from uuid import UUID, uuid4
 # a simplified message format that's compatible with both OpenAI and Anthropic
 ChatMessage = Dict[str, Any]  # Will be validated by LiteLLM
 
+# JSON Schema Models for Tool Parameters
+class ParameterProperty(BaseModel):
+    """Individual parameter property definition."""
+    type: str = Field(description="JSON Schema type (string, number, integer, boolean, array, object)")
+    description: Optional[str] = Field(default=None, description="Description of the parameter")
+    enum: Optional[List[Union[str, int, float, bool]]] = Field(default=None, description="Allowed values")
+    default: Optional[Any] = Field(default=None, description="Default value")
+    # For arrays
+    items: Optional[Dict[str, Any]] = Field(default=None, description="Schema for array items")
+    # For numbers
+    minimum: Optional[Union[int, float]] = Field(default=None, description="Minimum value")
+    maximum: Optional[Union[int, float]] = Field(default=None, description="Maximum value")
+    # For strings
+    minLength: Optional[int] = Field(default=None, description="Minimum string length")
+    maxLength: Optional[int] = Field(default=None, description="Maximum string length")
+    pattern: Optional[str] = Field(default=None, description="Regex pattern for validation")
+
+
+class ToolParameters(BaseModel):
+    """Tool parameters following JSON Schema specification."""
+    type: Literal["object"] = Field(default="object", description="Parameters are always an object")
+    properties: Dict[str, Union[ParameterProperty, Dict[str, Any]]] = Field(
+        default_factory=dict,
+        description="Parameter properties"
+    )
+    required: List[str] = Field(
+        default_factory=list,
+        description="List of required parameter names"
+    )
+    additionalProperties: bool = Field(
+        default=False,
+        description="Whether additional properties are allowed"
+    )
+    
+    @validator("required")
+    def validate_required(cls, v, values):
+        """Ensure required parameters exist in properties."""
+        if "properties" in values:
+            props = values["properties"]
+            for req in v:
+                if req not in props:
+                    raise ValueError(f"Required parameter '{req}' not found in properties")
+        return v
+
+
 # Tool Models following OpenAI's function calling format
-class ToolFunction(BaseModel):
-    """Tool function definition following OpenAI format."""
+class Tool(BaseModel):
+    """Tool definition compatible with OpenAI function calling format."""
+    type: Literal["function"] = Field(default="function")
     name: str = Field(description="Function name")
     description: str = Field(description="Function description")
-    parameters: Dict[str, Any] = Field(
+    parameters: Union[ToolParameters, Dict[str, Any]] = Field(
         description="Parameters as JSON Schema",
-        default_factory=lambda: {"type": "object", "properties": {}}
+        default_factory=lambda: ToolParameters()
     )
-
-
-class Tool(BaseModel):
-    """Tool definition compatible with OpenAI and MCP standards."""
-    type: Literal["function"] = Field(default="function")
-    function: ToolFunction = Field(description="Function details")
+    strict: Optional[bool] = Field(default=True, description="Enforce strict schema validation")
     
-    # Additional MCP-specific fields
+    # Additional fields for compatibility
     category: Optional[str] = Field(default="general", description="Tool category")
     
     @classmethod
     def from_mcp(cls, name: str, description: str, parameters: Optional[Dict] = None, category: str = "general"):
         """Create Tool from MCP-style definition."""
+        params = parameters or {"type": "object", "properties": {}}
+        if "additionalProperties" not in params:
+            params["additionalProperties"] = False
+        if "required" not in params:
+            params["required"] = []
+        
         return cls(
             type="function",
-            function=ToolFunction(
-                name=name,
-                description=description,
-                parameters=parameters or {"type": "object", "properties": {}}
-            ),
+            name=name,
+            description=description,
+            parameters=params,
+            strict=True,
             category=category
         )
     
@@ -49,19 +95,25 @@ class Tool(BaseModel):
         json_schema_extra = {
             "example": {
                 "type": "function",
-                "function": {
-                    "name": "grep",
-                    "description": "Search for patterns in files",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "pattern": {"type": "string", "description": "Pattern to search"},
-                            "file": {"type": "string", "description": "File to search in"}
+                "name": "get_weather",
+                "description": "Retrieves current weather for the given location.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "location": {
+                            "type": "string",
+                            "description": "City and country e.g. Bogotá, Colombia"
                         },
-                        "required": ["pattern"]
-                    }
+                        "units": {
+                            "type": "string",
+                            "enum": ["celsius", "fahrenheit"],
+                            "description": "Units the temperature will be returned in."
+                        }
+                    },
+                    "required": ["location", "units"],
+                    "additionalProperties": False
                 },
-                "category": "search"
+                "strict": True
             }
         }
 

@@ -182,7 +182,22 @@ class LTRService:
             # Get BM25 score if available
             if self.bm25_ranker and 'bm25_score' not in candidate:
                 # Calculate BM25 score if not present
-                bm25_scores = self.bm25_ranker.score_tools(query, [candidate])
+                # Convert dict to Tool object for BM25
+                from src.core.models import Tool, ToolParameters
+                
+                # Handle parameters properly
+                params = candidate.get('parameters')
+                if params and isinstance(params, dict) and params:
+                    tool_params = ToolParameters(**params)
+                else:
+                    tool_params = {}  # Pass empty dict instead of None
+                
+                tool_obj = Tool(
+                    name=candidate.get('tool_name', candidate.get('name', '')),
+                    description=candidate.get('description', ''),
+                    parameters=tool_params
+                )
+                bm25_scores = self.bm25_ranker.score_tools(query, [tool_obj])
                 tool_name = self._get_tool_name(candidate)
                 context['bm25_score'] = bm25_scores.get(tool_name, 0.0)
             else:

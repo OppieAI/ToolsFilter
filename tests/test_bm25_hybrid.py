@@ -274,9 +274,9 @@ class TestHybridScorer:
         scorer = HybridScorer()
         
         # Test with all same BM25 scores
-        uniform_bm25 = {tool.function.name: 5.0 for tool in sample_tools}
+        uniform_bm25 = {tool.name: 5.0 for tool in sample_tools}
         semantic_results = [
-            {"tool_name": tool.function.name, "score": 0.5}
+            {"tool_name": tool.name, "score": 0.5}
             for tool in sample_tools
         ]
         

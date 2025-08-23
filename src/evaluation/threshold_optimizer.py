@@ -156,18 +156,38 @@ class ThresholdOptimizer:
                 else:
                     true_negatives += 1
 
-            # Calculate metrics
+            # Calculate traditional metrics
             precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0
             recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0
             f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
             accuracy = (true_positives + true_negatives) / len(self.score_labels) if self.score_labels else 0
+            
+            # Calculate cleaner metrics (for noise scenarios)
+            # Count how many items would be returned at this threshold
+            num_returned = true_positives + false_positives
+            num_expected = true_positives + false_negatives
+            
+            # Relevance precision: Of returned items, what % are relevant?
+            relevance_precision = true_positives / num_returned if num_returned > 0 else 0
+            
+            # Expected recall: Of expected items, what % were found?
+            expected_recall = true_positives / num_expected if num_expected > 0 else 0
+            
+            # Cleaner F1 based on relevance metrics
+            relevance_f1 = 2 * relevance_precision * expected_recall / (relevance_precision + expected_recall) if (relevance_precision + expected_recall) > 0 else 0
 
             return {
                 'threshold': threshold,
+                # Traditional metrics
                 'precision': precision,
                 'recall': recall,
                 'f1': f1,
                 'accuracy': accuracy,
+                # Cleaner metrics
+                'relevance_precision': relevance_precision,
+                'expected_recall': expected_recall,
+                'relevance_f1': relevance_f1,
+                # Raw counts
                 'true_positives': true_positives,
                 'false_positives': false_positives,
                 'false_negatives': false_negatives,
@@ -175,13 +195,14 @@ class ThresholdOptimizer:
                 'averaging': 'micro'
             }
 
-    def grid_search_optimal_threshold(self, step: float = 0.01, metric: str = 'f1') -> Dict[str, float]:
+    def grid_search_optimal_threshold(self, step: float = 0.01, metric: str = 'f1', use_cleaner_metrics: bool = False) -> Dict[str, float]:
         """
         Grid search to find optimal threshold
 
         Args:
             step: Step size for threshold search
             metric: Metric to optimize ('f1', 'precision', 'recall', 'accuracy', 'balanced')
+            use_cleaner_metrics: If True, optimize on cleaner metrics (relevance_f1, etc.)
         """
         if not self.score_labels:
             return {'threshold': 0.5, 'message': 'No scores available'}
@@ -203,19 +224,38 @@ class ThresholdOptimizer:
             all_results.append(metrics)
 
             # Determine which metric to optimize
-            if metric == 'f1':
-                metric_value = metrics['f1']
-            elif metric == 'precision':
-                metric_value = metrics['precision']
-            elif metric == 'recall':
-                metric_value = metrics['recall']
-            elif metric == 'accuracy':
-                metric_value = metrics['accuracy']
-            elif metric == 'balanced':
-                # Balance between precision and recall
-                metric_value = (metrics['precision'] + metrics['recall']) / 2
+            if use_cleaner_metrics and 'relevance_f1' in metrics:
+                # Use cleaner metrics if available and requested
+                if metric == 'f1':
+                    metric_value = metrics.get('relevance_f1', metrics['f1'])
+                elif metric == 'precision':
+                    metric_value = metrics.get('relevance_precision', metrics['precision'])
+                elif metric == 'recall':
+                    metric_value = metrics.get('expected_recall', metrics['recall'])
+                elif metric == 'accuracy':
+                    metric_value = metrics['accuracy']  # No cleaner version of accuracy
+                elif metric == 'balanced':
+                    # Balance between relevance precision and expected recall
+                    rp = metrics.get('relevance_precision', metrics['precision'])
+                    er = metrics.get('expected_recall', metrics['recall'])
+                    metric_value = (rp + er) / 2
+                else:
+                    metric_value = metrics.get('relevance_f1', metrics['f1'])
             else:
-                metric_value = metrics['f1']
+                # Use traditional metrics
+                if metric == 'f1':
+                    metric_value = metrics['f1']
+                elif metric == 'precision':
+                    metric_value = metrics['precision']
+                elif metric == 'recall':
+                    metric_value = metrics['recall']
+                elif metric == 'accuracy':
+                    metric_value = metrics['accuracy']
+                elif metric == 'balanced':
+                    # Balance between precision and recall
+                    metric_value = (metrics['precision'] + metrics['recall']) / 2
+                else:
+                    metric_value = metrics['f1']
 
             if metric_value > best_metric_value:
                 best_metric_value = metric_value
@@ -369,60 +409,112 @@ class ThresholdOptimizer:
             'method': 'roc_analysis'
         }
 
-    def find_optimal_threshold(self, methods: Optional[List[str]] = None) -> Dict[str, any]:
+    def find_optimal_threshold(self, methods: Optional[List[str]] = None, calculate_cleaner_version: bool = True) -> Dict[str, any]:
         """
         Find optimal threshold using multiple methods and return recommendations
 
         Args:
             methods: List of methods to use. If None, uses all methods.
+            calculate_cleaner_version: If True, also calculates cleaner versions optimized for noise scenarios
         """
         if methods is None:
             methods = ['grid_search_f1', 'grid_search_balanced', 'roc_analysis',
                       'percentile_75', 'statistical_mean_std', 'elbow']
 
+        # Traditional results
         results = {}
+        
+        # Cleaner results (if requested)
+        cleaner_results = {} if calculate_cleaner_version else None
 
         for method in methods:
             if method == 'grid_search_f1':
-                result = self.grid_search_optimal_threshold(metric='f1')
+                # Traditional
+                result = self.grid_search_optimal_threshold(metric='f1', use_cleaner_metrics=False)
                 results['grid_search_f1'] = result.get('optimal_threshold', result.get('threshold', 0.5))
+                
+                # Cleaner version
+                if calculate_cleaner_version:
+                    cleaner_result = self.grid_search_optimal_threshold(metric='f1', use_cleaner_metrics=True)
+                    cleaner_results['grid_search_f1'] = cleaner_result.get('optimal_threshold', cleaner_result.get('threshold', 0.5))
 
             elif method == 'grid_search_balanced':
-                result = self.grid_search_optimal_threshold(metric='balanced')
+                # Traditional
+                result = self.grid_search_optimal_threshold(metric='balanced', use_cleaner_metrics=False)
                 results['grid_search_balanced'] = result.get('optimal_threshold', result.get('threshold', 0.5))
+                
+                # Cleaner version
+                if calculate_cleaner_version:
+                    cleaner_result = self.grid_search_optimal_threshold(metric='balanced', use_cleaner_metrics=True)
+                    cleaner_results['grid_search_balanced'] = cleaner_result.get('optimal_threshold', cleaner_result.get('threshold', 0.5))
 
             elif method == 'roc_analysis':
                 result = self.roc_analysis_threshold()
                 results['roc_analysis'] = result.get('optimal_threshold', result.get('threshold', 0.5))
+                # ROC analysis is the same for both versions
+                if calculate_cleaner_version:
+                    cleaner_results['roc_analysis'] = result.get('optimal_threshold', result.get('threshold', 0.5))
 
             elif method == 'percentile_75':
-                results['percentile_75'] = self.percentile_based_threshold(75)
+                threshold = self.percentile_based_threshold(75)
+                results['percentile_75'] = threshold
+                if calculate_cleaner_version:
+                    cleaner_results['percentile_75'] = threshold  # Same for both
 
             elif method == 'percentile_80':
-                results['percentile_80'] = self.percentile_based_threshold(80)
+                threshold = self.percentile_based_threshold(80)
+                results['percentile_80'] = threshold
+                if calculate_cleaner_version:
+                    cleaner_results['percentile_80'] = threshold  # Same for both
 
             elif method == 'statistical_mean_std':
-                results['statistical_mean_std'] = self.statistical_threshold('mean_std')
+                threshold = self.statistical_threshold('mean_std')
+                results['statistical_mean_std'] = threshold
+                if calculate_cleaner_version:
+                    cleaner_results['statistical_mean_std'] = threshold  # Same for both
 
             elif method == 'statistical_intersection':
-                results['statistical_intersection'] = self.statistical_threshold('intersection')
+                threshold = self.statistical_threshold('intersection')
+                results['statistical_intersection'] = threshold
+                if calculate_cleaner_version:
+                    cleaner_results['statistical_intersection'] = threshold  # Same for both
 
             elif method == 'elbow':
-                results['elbow'] = self.elbow_method_threshold()
+                threshold = self.elbow_method_threshold()
+                results['elbow'] = threshold
+                if calculate_cleaner_version:
+                    cleaner_results['elbow'] = threshold  # Same for both
 
         # Calculate consensus (median of all methods)
         all_thresholds = list(results.values())
         consensus_threshold = np.median(all_thresholds) if all_thresholds else 0.5
 
+        # Calculate cleaner consensus if requested
+        cleaner_consensus_threshold = None
+        cleaner_consensus_metrics = None
+        if calculate_cleaner_version and cleaner_results:
+            cleaner_all_thresholds = list(cleaner_results.values())
+            cleaner_consensus_threshold = np.median(cleaner_all_thresholds) if cleaner_all_thresholds else 0.5
+            # Evaluate cleaner consensus using micro-averaging to get cleaner metrics
+            cleaner_consensus_metrics = self.calculate_metrics_at_threshold(cleaner_consensus_threshold, use_macro_averaging=False)
+
         # Evaluate consensus threshold using macro-averaging (IR standard)
         consensus_metrics = self.calculate_metrics_at_threshold(consensus_threshold, use_macro_averaging=True)
 
-        return {
+        result = {
             'methods': results,
             'consensus_threshold': consensus_threshold,
             'consensus_metrics': consensus_metrics,
             'score_distribution': self.get_score_distribution()
         }
+        
+        # Add cleaner versions if calculated
+        if calculate_cleaner_version:
+            result['cleaner_methods'] = cleaner_results
+            result['cleaner_consensus_threshold'] = cleaner_consensus_threshold
+            result['cleaner_consensus_metrics'] = cleaner_consensus_metrics
+        
+        return result
 
     def get_score_distribution(self) -> Dict[str, any]:
         """Get statistics about score distribution"""

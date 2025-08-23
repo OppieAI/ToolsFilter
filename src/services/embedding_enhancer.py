@@ -49,19 +49,26 @@ class ToolEmbeddingEnhancer:
             tool = tool.model_dump()
         
         if tool.get("type") == "function":
-            function = tool.get("function", {})
+            # Handle both old nested and new flat structure
+            if "function" in tool:
+                # Old nested structure
+                function = tool.get("function", {})
+                name = function.get("name", "")
+                description = function.get("description", "")
+                params = function.get("parameters", {})
+            else:
+                # New flat structure
+                name = tool.get("name", "")
+                description = tool.get("description", "")
+                params = tool.get("parameters", {})
             
             # 1. Name and description
-            name = function.get("name", "")
-            description = function.get("description", "")
-            
             if name:
                 parts.append(f"Tool: {name}")
             if description:
                 parts.append(f"Description: {description}")
             
             # 2. Parameters with types and descriptions
-            params = function.get("parameters", {})
             if params.get("properties"):
                 param_texts = []
                 required_params = params.get("required", [])
@@ -92,11 +99,11 @@ class ToolEmbeddingEnhancer:
                 parts.append("Parameters: none")
             
             # 3. Category/tags (if available in tool metadata)
-            category = tool.get("category", function.get("category", ""))
+            category = tool.get("category", "")
             if category:
                 parts.append(f"Category: {category}")
             
-            tags = tool.get("tags", function.get("tags", []))
+            tags = tool.get("tags", [])
             if tags:
                 if isinstance(tags, list):
                     parts.append(f"Tags: {', '.join(tags)}")
@@ -104,7 +111,7 @@ class ToolEmbeddingEnhancer:
                     parts.append(f"Tags: {tags}")
             
             # 4. Examples (if available)
-            examples = tool.get("examples", function.get("examples", ""))
+            examples = tool.get("examples", "")
             if examples:
                 if isinstance(examples, list):
                     parts.append(f"Examples: {'; '.join(examples)}")
@@ -117,7 +124,7 @@ class ToolEmbeddingEnhancer:
                 parts.append(f"Keywords: {', '.join(keywords)}")
             
             # 6. Add return type information if available
-            returns = function.get("returns", {})
+            returns = tool.get("returns", {})
             if returns:
                 return_type = returns.get("type", "")
                 return_desc = returns.get("description", "")

@@ -97,16 +97,19 @@ class CrossEncoderReranker:
                 name = tool.get("tool_name", tool.get("name", ""))
                 description = tool.get("description", "")
                 return f"{name}: {description}"
-        elif hasattr(tool, "function"):
-            # Tool object
-            func = tool.function
-            name = func.name if hasattr(func, 'name') else ""
-            description = func.description if hasattr(func, 'description') else ""
+        elif hasattr(tool, "name"):
+            # Tool object with flat structure
+            name = tool.name if hasattr(tool, 'name') else ""
+            description = tool.description if hasattr(tool, 'description') else ""
             
             # Include parameters
-            if hasattr(func, 'parameters'):
-                params = func.parameters
-                param_props = params.get("properties", {}) if isinstance(params, dict) else {}
+            if hasattr(tool, 'parameters'):
+                params = tool.parameters
+                if isinstance(params, dict):
+                    param_props = params.get("properties", {})
+                else:
+                    # Handle ToolParameters object
+                    param_props = params.properties if hasattr(params, 'properties') else {}
                 param_names = list(param_props.keys()) if param_props else []
                 param_text = f" Parameters: {', '.join(param_names)}" if param_names else ""
             else:

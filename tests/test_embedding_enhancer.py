@@ -189,9 +189,14 @@ class TestToolEmbeddingEnhancer:
         # Original simple approach
         def old_tool_to_text(tool):
             if tool.get("type") == "function":
-                function = tool.get("function", {})
-                name = function.get("name", "")
-                description = function.get("description", "")
+                # Handle both old nested and new flat structure
+                if "function" in tool:
+                    function = tool.get("function", {})
+                    name = function.get("name", "")
+                    description = function.get("description", "")
+                else:
+                    name = tool.get("name", "")
+                    description = tool.get("description", "")
                 return f"{name}: {description}"
             return str(tool)
         
