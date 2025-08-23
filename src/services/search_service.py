@@ -10,6 +10,10 @@ from src.services.embeddings import EmbeddingService
 from src.services.bm25_ranker import BM25Ranker, HybridScorer
 from src.services.cross_encoder_reranker import CrossEncoderReranker
 from src.services.ltr_service import LTRService
+from src.services.search_pipeline_config import (
+    SearchPipelineConfig, PipelineStage, TrainingPipelineConfig,
+    EvaluationPipelineConfig, ProductionPipelineConfig, TwoStagePipelineConfig
+)
 from src.core.models import Tool
 
 logger = logging.getLogger(__name__)
@@ -24,6 +28,7 @@ class SearchStrategy(Enum):
     HYBRID_CROSS_ENCODER = "hybrid_cross_encoder"
     LTR = "ltr"
     HYBRID_LTR = "hybrid_ltr"
+    TWO_STAGE = "two_stage"
 
 
 class SearchService:
@@ -141,6 +146,328 @@ class SearchService:
             logger.warning(f"Failed to initialize LTR service: {e}")
             self.enable_ltr = False
             return None
+
+    # =================================================================
+    # UNIFIED PIPELINE SEARCH METHOD - ELIMINATES CODE DUPLICATION
+    # =================================================================
+
+    async def search_with_config(
+        self,
+        query: Optional[str] = None,
+        messages: Optional[List[Dict[str, Any]]] = None,
+        available_tools: List[Any] = None,
+        query_embedding: Optional[List[float]] = None,
+        config: Optional[SearchPipelineConfig] = None,
+        **kwargs
+    ) -> List[Dict[str, Any]]:
+        """
+        Unified search method using pipeline configuration.
+        
+        This method replaces the need for separate search methods and eliminates
+        code duplication. All search strategies are now configurable through
+        SearchPipelineConfig instances.
+        
+        Args:
+            query: Text query
+            messages: Conversation messages
+            available_tools: List of available tools
+            query_embedding: Pre-computed query embedding (optional)
+            config: Pipeline configuration (uses ProductionPipelineConfig if None)
+            **kwargs: Additional parameters (backwards compatibility)
+            
+        Returns:
+            List of ranked tools according to pipeline configuration
+        """
+        # Use default production config if none provided
+        if config is None:
+            from src.services.search_pipeline_config import get_production_config
+            config = get_production_config()
+
+        # Extract query text if not provided
+        if query is None and messages:
+            query = " ".join(msg["content"] for msg in messages if msg.get("role") == "user")
+        if query is None:
+            raise ValueError("Must provide either query or messages")
+
+        # Debug logging if enabled
+        if config.debug_mode:
+            logger.info(f"🔧 Pipeline search with config: {type(config).__name__}")
+            logger.info(f"  - Query: {query[:100]}...")
+            logger.info(f"  - Available tools: {len(available_tools) if available_tools else 0}")
+            logger.info(f"  - Stop after: {config.stop_after_stage.value if config.stop_after_stage else 'full pipeline'}")
+            logger.info(f"  - Enabled stages: {[stage.value for stage in PipelineStage if config.is_stage_enabled(stage)]}")
+
+        candidates = []
+        stage_results = {}  # For debugging and feature extraction
+
+        # =================================================================
+        # STAGE 1: MULTI-CRITERIA OR SEMANTIC SEARCH
+        # =================================================================
+        if config.is_stage_enabled(PipelineStage.MULTI_CRITERIA):
+            logger.debug("🔍 Stage 1: Multi-criteria search")
+            candidates = await self.multi_criteria_search(
+                query=query,
+                available_tools=available_tools,
+                query_embedding=query_embedding,
+                semantic_limit=config.get_limit_for_stage(PipelineStage.MULTI_CRITERIA),
+                exact_match_boost=config.exact_match_boost
+            )
+            stage_results['multi_criteria'] = len(candidates)
+            
+            # Include match type info if requested
+            if config.include_match_types:
+                logger.debug(f"  Match types: {self._summarize_match_types(candidates)}")
+                
+        elif config.is_stage_enabled(PipelineStage.SEMANTIC):
+            logger.debug("🔍 Stage 1: Semantic search")
+            candidates = await self.semantic_search(
+                query=query,
+                messages=messages,
+                query_embedding=query_embedding,
+                available_tools=available_tools,
+                limit=config.get_limit_for_stage(PipelineStage.SEMANTIC),
+                score_threshold=config.semantic_threshold
+            )
+            stage_results['semantic'] = len(candidates)
+
+        if config.should_stop_after(PipelineStage.MULTI_CRITERIA) or config.should_stop_after(PipelineStage.SEMANTIC):
+            return self._finalize_results(candidates, config, stage_results)
+
+        # =================================================================
+        # STAGE 2: BM25 HYBRID SCORING
+        # =================================================================
+        if config.is_stage_enabled(PipelineStage.BM25) and self.enable_bm25 and self.bm25_ranker and candidates:
+            logger.debug("🔍 Stage 2: BM25 hybrid scoring")
+            candidates = await self._apply_bm25_scoring(query, candidates, available_tools, config)
+            stage_results['bm25'] = len(candidates)
+
+        if config.should_stop_after(PipelineStage.BM25):
+            return self._finalize_results(candidates, config, stage_results)
+
+        # =================================================================
+        # STAGE 3: CROSS-ENCODER RERANKING
+        # =================================================================
+        if (config.is_stage_enabled(PipelineStage.CROSS_ENCODER) and 
+            self.enable_cross_encoder and self.cross_encoder and candidates):
+            logger.debug("🔍 Stage 3: Cross-encoder reranking")
+            
+            # Only rerank if we have enough candidates
+            if len(candidates) >= 5:
+                rerank_limit = config.get_limit_for_stage(PipelineStage.CROSS_ENCODER)
+                candidates = await self.cross_encoder_rerank(
+                    query=query,
+                    candidates=candidates,
+                    top_k=min(rerank_limit, len(candidates))
+                )
+                stage_results['cross_encoder'] = len(candidates)
+
+        if config.should_stop_after(PipelineStage.CROSS_ENCODER):
+            return self._finalize_results(candidates, config, stage_results)
+
+        # =================================================================
+        # STAGE 4: LTR RANKING
+        # =================================================================
+        if (config.is_stage_enabled(PipelineStage.LTR) and 
+            self.enable_ltr and self.ltr_service and candidates):
+            logger.debug("🔍 Stage 4: LTR ranking")
+            
+            candidates = await self.ltr_service.rank_tools(
+                query=query,
+                candidates=candidates,
+                top_k=config.get_limit_for_stage(PipelineStage.LTR),
+                include_features=config.extract_features
+            )
+            stage_results['ltr'] = len(candidates)
+
+        if config.should_stop_after(PipelineStage.LTR):
+            return self._finalize_results(candidates, config, stage_results)
+
+        # =================================================================
+        # STAGE 5: POST-PROCESSING
+        # =================================================================
+        if config.is_stage_enabled(PipelineStage.POST_PROCESSING):
+            candidates = await self._apply_post_processing(candidates, config)
+
+        # Final results
+        return self._finalize_results(candidates, config, stage_results)
+
+    async def _apply_bm25_scoring(
+        self, 
+        query: str, 
+        candidates: List[Dict[str, Any]], 
+        available_tools: List[Any],
+        config: SearchPipelineConfig
+    ) -> List[Dict[str, Any]]:
+        """Apply BM25 scoring to candidates (matching production hybrid_ltr_search)"""
+        
+        # Convert candidates to Tool objects for BM25 (matching production logic)
+        from src.core.models import Tool, ToolParameters
+        candidate_tools = []
+        
+        for c in candidates:
+            # Find original tool data if available
+            tool_name = c.get('tool_name', '')
+            original_tool = None
+            
+            if available_tools:
+                for tool in available_tools:
+                    if self._get_tool_name_from_tool(tool) == tool_name:
+                        original_tool = tool
+                        break
+            
+            # Create Tool object
+            if original_tool:
+                if hasattr(original_tool, 'parameters'):
+                    params = original_tool.parameters
+                else:
+                    params = c.get('parameters', {})
+            else:
+                params = c.get('parameters', {})
+            
+            if params and isinstance(params, dict) and params:
+                try:
+                    tool_params = ToolParameters(**params)
+                except:
+                    tool_params = {}
+            else:
+                tool_params = {}
+            
+            tool_obj = Tool(
+                name=tool_name,
+                description=c.get('description', ''),
+                parameters=tool_params
+            )
+            candidate_tools.append(tool_obj)
+
+        # Get BM25 scores for candidates (matching production)
+        bm25_scores = self.bm25_ranker.score_tools(query, candidate_tools)
+
+        # Update candidates with BM25 scores and hybrid scores (matching production logic)
+        for c in candidates:
+            tool_name = c.get('tool_name', '')
+            c['bm25_score'] = bm25_scores.get(tool_name, 0.0)
+
+            # Update combined score if BM25 is significant (matching production)
+            if c['bm25_score'] > config.bm25_significance_threshold:
+                semantic = c.get('semantic_score', c.get('score', 0))
+                c['hybrid_score'] = (config.semantic_weight * semantic + 
+                                   config.bm25_weight * c['bm25_score'])
+                c['score'] = c['hybrid_score']  # Update main score like production
+
+        # Sort by updated scores
+        candidates.sort(key=lambda x: x.get('score', 0), reverse=True)
+        return candidates
+
+    async def _apply_post_processing(
+        self, 
+        candidates: List[Dict[str, Any]], 
+        config: SearchPipelineConfig
+    ) -> List[Dict[str, Any]]:
+        """Apply post-processing filters and transformations"""
+        
+        if not candidates:
+            return []
+
+        # Apply final threshold
+        if config.final_threshold > 0:
+            candidates = [c for c in candidates if c.get('score', 0) >= config.final_threshold]
+
+        # Apply confidence cutoff if enabled
+        if config.enable_confidence_cutoff:
+            candidates = self._apply_confidence_cutoff_with_config(candidates, config)
+
+        return candidates
+
+    def _apply_confidence_cutoff_with_config(
+        self, 
+        results: List[Dict[str, Any]], 
+        config: SearchPipelineConfig
+    ) -> List[Dict[str, Any]]:
+        """Apply confidence cutoff with config parameters"""
+        
+        if not results:
+            return []
+            
+        filtered = [results[0]]  # Always include top result
+        if len(results) == 1:
+            return filtered
+            
+        top_score = results[0].get('score', 0)
+        
+        for i in range(1, len(results)):
+            current_score = results[i].get('score', 0)
+            prev_score = results[i-1].get('score', 0)
+            
+            # Stop if score drops too much from top result
+            if current_score < config.confidence_cutoff_ratio * top_score:
+                if config.debug_mode:
+                    logger.debug(f"Confidence cutoff: score {current_score:.3f} < {config.confidence_cutoff_ratio*100}% of top score {top_score:.3f}")
+                break
+            
+            # Stop if below minimum confidence threshold
+            if current_score < config.confidence_min_threshold:
+                if config.debug_mode:
+                    logger.debug(f"Confidence cutoff: score {current_score:.3f} below minimum {config.confidence_min_threshold}")
+                break
+            
+            # Stop if large gap from previous result
+            score_drop = prev_score - current_score
+            if score_drop > config.confidence_max_gap and i > 3:  # Allow at least 3 results
+                if config.debug_mode:
+                    logger.debug(f"Confidence cutoff: large score drop {score_drop:.3f} after position {i}")
+                break
+            
+            filtered.append(results[i])
+        
+        return filtered
+
+    def _finalize_results(
+        self, 
+        candidates: List[Dict[str, Any]], 
+        config: SearchPipelineConfig,
+        stage_results: Dict[str, int]
+    ) -> List[Dict[str, Any]]:
+        """Finalize results with config-based processing"""
+        
+        # Apply final limit
+        final_results = candidates[:config.final_limit]
+        
+        # Add pipeline metadata if debugging
+        if config.debug_mode and final_results:
+            pipeline_info = {
+                'pipeline_stages': stage_results,
+                'config_type': type(config).__name__,
+                'total_candidates_processed': sum(stage_results.values()) if stage_results else 0
+            }
+            
+            # Add to first result for debugging
+            final_results[0]['_pipeline_debug'] = pipeline_info
+            
+            logger.info(f"🎯 Pipeline complete: {pipeline_info}")
+        
+        # Clean up metadata fields if not in debug mode
+        if not config.include_scores and not config.debug_mode:
+            for result in final_results:
+                # Remove internal scoring fields
+                result.pop('semantic_score', None)
+                result.pop('bm25_score', None) 
+                result.pop('hybrid_score', None)
+                result.pop('match_types', None)
+        
+        return final_results
+
+    def _summarize_match_types(self, candidates: List[Dict[str, Any]]) -> Dict[str, int]:
+        """Summarize match types for debugging"""
+        type_counts = {}
+        for c in candidates:
+            match_types = c.get('match_types', [])
+            for match_type in match_types:
+                type_counts[match_type] = type_counts.get(match_type, 0) + 1
+        return type_counts
+
+    # =================================================================
+    # EXISTING METHODS (BACKWARDS COMPATIBILITY)
+    # =================================================================
 
     async def semantic_search(
         self,
@@ -1028,6 +1355,15 @@ class SearchService:
                 query_embedding=query_embedding,
                 limit=limit
             )
+        
+        elif strategy == SearchStrategy.TWO_STAGE:
+            return await self.two_stage_search(
+                query=query,
+                messages=messages,
+                available_tools=available_tools,
+                query_embedding=query_embedding,
+                limit=limit
+            )
 
         else:
             raise ValueError(f"Unknown search strategy: {strategy}")
@@ -1066,6 +1402,10 @@ class SearchService:
 
             if self.enable_bm25:
                 strategies.append(SearchStrategy.HYBRID_LTR)
+        
+        # Two-stage filtering is always available (uses hybrid as base)
+        if self.enable_bm25:
+            strategies.append(SearchStrategy.TWO_STAGE)
 
         return strategies
 
@@ -1085,3 +1425,160 @@ class SearchService:
             stats["ltr_stats"] = self.ltr_service.get_stats()
 
         return stats
+
+    async def two_stage_search(
+        self,
+        query: Optional[str] = None,
+        messages: Optional[List[Dict[str, Any]]] = None,
+        available_tools: List[Any] = None,
+        query_embedding: Optional[List[float]] = None,
+        limit: int = 10,
+        stage1_threshold: float = 0.10,
+        stage1_limit: int = 50,
+        stage2_threshold: float = 0.15,
+        enable_confidence_cutoff: bool = True
+    ) -> List[Dict[str, Any]]:
+        """
+        Two-stage filtering: aggressive first-stage followed by precise reranking.
+        
+        Based on performance improvement roadmap item #2:
+        - Stage 1: Cast wide net with lower threshold and higher limit
+        - Stage 2: Apply stricter filtering and precise reranking
+        
+        Args:
+            query: Search query
+            messages: Conversation messages  
+            available_tools: List of available tools
+            query_embedding: Pre-computed query embedding (optional)
+            limit: Final number of results to return
+            stage1_threshold: Lower threshold for initial candidate retrieval
+            stage1_limit: Higher limit for initial candidates (cast wide net)
+            stage2_threshold: Stricter threshold for final filtering
+            enable_confidence_cutoff: Apply confidence-based result limiting
+            
+        Returns:
+            List of tools with two-stage filtering applied
+        """
+        # Extract query if not provided
+        if query is None and messages:
+            query = " ".join(msg["content"] for msg in messages if msg.get("role") == "user")
+        if query is None:
+            raise ValueError("Must provide either query or messages")
+
+        logger.info(f"Two-stage search: Stage 1 - threshold={stage1_threshold}, limit={stage1_limit}")
+        
+        # Stage 1: Cast wide net with aggressive filtering
+        # Use hybrid search with lower threshold to get more candidates
+        initial_candidates = await self.hybrid_search(
+            query=query,
+            messages=messages,
+            available_tools=available_tools,
+            query_embedding=query_embedding,
+            limit=stage1_limit,
+            score_threshold=stage1_threshold  # Lower threshold
+        )
+        
+        if not initial_candidates:
+            logger.warning("Stage 1 returned no candidates")
+            return []
+            
+        logger.info(f"Stage 1 retrieved {len(initial_candidates)} initial candidates")
+        
+        # Stage 2: Precise reranking with strict criteria
+        logger.info(f"Two-stage search: Stage 2 - threshold={stage2_threshold}, limit={limit}")
+        
+        # Apply multiple reranking strategies
+        candidates = initial_candidates
+        
+        # Cross-encoder reranking if enabled
+        if self.enable_cross_encoder and self.cross_encoder:
+            logger.info(f"Applying cross-encoder reranking to {len(candidates)} candidates")
+            candidates = await self.cross_encoder_rerank(
+                query=query,
+                candidates=candidates,
+                top_k=min(stage1_limit, len(candidates))
+            )
+            logger.info(f"Cross-encoder reranked to {len(candidates)} candidates")
+        
+        # LTR reranking if enabled
+        if self.enable_ltr and self.ltr_service:
+            logger.info(f"Applying LTR reranking to {len(candidates)} candidates")
+            candidates = await self.ltr_service.rank_tools(
+                query=query,
+                candidates=candidates,
+                top_k=min(stage1_limit, len(candidates))
+            )
+            logger.info(f"LTR reranked to {len(candidates)} candidates")
+        
+        # Apply stricter threshold filtering
+        logger.info(f"Applying strict threshold filter: {stage2_threshold}")
+        filtered_candidates = [c for c in candidates if c.get('score', 0) >= stage2_threshold]
+        logger.info(f"Strict filtering: {len(candidates)} -> {len(filtered_candidates)} candidates")
+        
+        # Apply confidence-based cutoff
+        if enable_confidence_cutoff:
+            filtered_candidates = self._apply_confidence_cutoff(filtered_candidates)
+            logger.info(f"Confidence cutoff: {len(filtered_candidates)} final candidates")
+        
+        # Final limiting
+        final_results = filtered_candidates[:limit]
+        
+        logger.info(
+            f"Two-stage pipeline complete: "
+            f"{len(available_tools) if available_tools else 'all'} tools -> "
+            f"{len(initial_candidates)} stage1 -> "
+            f"{len(filtered_candidates)} stage2 -> "
+            f"{len(final_results)} final"
+        )
+        
+        return final_results
+        
+    def _apply_confidence_cutoff(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Apply confidence-based cutoff to results.
+        
+        Implements roadmap strategy: stop returning results when confidence drops.
+        
+        Args:
+            results: List of results with scores
+            
+        Returns:
+            Filtered results with confidence cutoff applied
+        """
+        if not results:
+            return []
+            
+        filtered = [results[0]]  # Always include top result
+        if len(results) == 1:
+            return filtered
+            
+        top_score = results[0].get('score', 0)
+        
+        for i in range(1, len(results)):
+            current_score = results[i].get('score', 0)
+            prev_score = results[i-1].get('score', 0)
+            
+            # Stop if score drops too much from top result
+            if current_score < 0.6 * top_score:
+                logger.debug(f"Confidence cutoff: score {current_score:.3f} < 60% of top score {top_score:.3f}")
+                break
+            
+            # Stop if below minimum confidence threshold
+            if current_score < 0.15:
+                logger.debug(f"Confidence cutoff: score {current_score:.3f} below minimum 0.15")
+                break
+            
+            # Stop if large gap from previous result
+            score_drop = prev_score - current_score
+            if score_drop > 0.1 and i > 3:  # Allow at least 3 results
+                logger.debug(f"Confidence cutoff: large score drop {score_drop:.3f} after position {i}")
+                break
+            
+            filtered.append(results[i])
+        
+        # Hard limit at 10 results
+        final_count = min(len(filtered), 10)
+        if len(filtered) > 10:
+            logger.debug(f"Confidence cutoff: hard limit applied, {len(filtered)} -> 10")
+            
+        return filtered[:final_count]

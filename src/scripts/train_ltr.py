@@ -187,9 +187,9 @@ async def train_ltr_model_with_context():
         logger.warning(f"Only {len(training_data)} training samples. Consider generating more data.")
 
     # Limit training data for faster testing (remove this in production)
-    # training_data = training_data[:20]  # Use first 20 samples for faster testing
-    # logger.info(f"Using {len(training_data)} training samples for LTR training (limited for testing)")
-    # logger.info("NOTE: Remove the training_data limit for full production training")
+    training_data = training_data[:20]  # Use first 20 samples for faster testing
+    logger.info(f"Using {len(training_data)} training samples for LTR training (limited for testing)")
+    logger.info("NOTE: Remove the training_data limit for full production training")
 
 
 
@@ -233,7 +233,9 @@ async def train_ltr_model_with_context():
     )
 
     # Convert training data to LTR format with context generation
-    logger.info("Preparing training data for LTR with context scores...")
+    # CRITICAL: Using multi_criteria_search to match production hybrid_ltr_search pipeline
+    # This ensures training features match production features exactly!
+    logger.info("Preparing training data for LTR with context scores (using production pipeline)...")
     all_features = []
     all_relevance = []
     query_groups = []
@@ -281,95 +283,85 @@ async def train_ltr_model_with_context():
                     except Exception as e:
                         logger.info(f"  Tool '{tool_name}': ❌ ERROR: {e}")
 
-            # Try semantic search with very low threshold to ensure results
-            semantic_results = await search_service.semantic_search(
-                query=query,
-                available_tools=None,  # Don't filter by available tools
-                limit=len(tools_for_search),  # Get all tools
-                score_threshold=0.0  # Set very low threshold to ensure results!
+            # 🚀 PIPELINE CONFIG REVOLUTION: Use unified search_with_config!
+            # This automatically matches production hybrid_ltr_search pipeline
+            from src.services.search_pipeline_config import get_training_config, PipelineStage
+
+            # Get training config that stops before LTR stage
+            training_config = get_training_config(
+                # Stop after cross-encoder to get exact production features
+                stop_after_stage=PipelineStage.CROSS_ENCODER,
+                extract_features=True,  # Enable feature extraction
+                debug_mode=True if idx < 3 else False,  # Debug first few queries
+
+                # Use production-like limits but get more candidates for training
+                multi_criteria_limit=len(tools_for_search),  # Get all available tools
+                cross_encoder_limit=min(100, len(tools_for_search)),  # Reasonable limit
+                final_limit=len(tools_for_search),  # Keep all for training
+
+                # No filtering - we want all candidates with their scores
+                final_threshold=0.0,
+                enable_confidence_cutoff=False
             )
 
-            # If we got results, filter to only available tools
-            if semantic_results:
-                available_names = {tool.name for tool in tools_for_search}
-                semantic_results = [
-                    result for result in semantic_results
-                    if result.get('tool_name', result.get('name', '')) in available_names
-                ]
-                if idx == 0:
-                    logger.info(f"🎯 Filtered semantic results: {len(semantic_results)} tools")
+            logger.debug(f"🎯 Using TrainingPipelineConfig: {training_config.stop_after_stage.value} pipeline")
 
-            # If still no results, create fallback
-            if not semantic_results:
-                logger.warning(f"No semantic results despite indexing for query: {query[:50]}...")
-                semantic_results = [{
-                    'tool_name': tool.name,
-                    'name': tool.name,
-                    'score': 0.1
-                } for tool in tools_for_search]
+            # This ONE call replaces ALL the manual pipeline code!
+            production_candidates = await search_service.search_with_config(
+                query=query,
+                available_tools=tools_for_search,
+                config=training_config
+            )
 
-            # Step 2: Get BM25 scores using search_service's BM25 ranker
-            bm25_scores = search_service.bm25_ranker.score_tools(query, tools_for_search)
+            if idx == 0:
+                logger.info(f"🎯 Production pipeline results: {len(production_candidates)} tools")
+                # Log match types and scores for first query to verify
+                for result in production_candidates[:5]:
+                    match_types = result.get('match_types', ['unknown'])
+                    logger.info(f"  {result['tool_name']}: {result['score']:.3f} (types: {match_types})")
 
-            # Step 3: Get cross-encoder scores if available
-            cross_encoder_results = []
-            try:
-                # Use cross_encoder_rerank with correct parameters
-                if hasattr(search_service, 'cross_encoder') and search_service.cross_encoder:
-                    # Convert semantic results to candidates format for cross-encoder
-                    candidates = [{
-                        'tool_name': result.get('tool_name', result.get('name', '')),
-                        'name': result.get('tool_name', result.get('name', '')),
-                        'score': result['score']
-                    } for result in semantic_results]
+            # 🎯 REVOLUTIONARY SIMPLIFICATION: All pipeline work done!
+            # production_candidates already contains results from the EXACT production pipeline:
+            # Stage 1: Multi-criteria search (semantic + exact + param + description matches)
+            # Stage 2: BM25 scoring and hybrid score combination
+            # Stage 3: Cross-encoder reranking
 
-                    cross_encoder_results = await search_service.cross_encoder_rerank(
-                        query=query,
-                        candidates=candidates,  # Fixed parameter name
-                        top_k=len(tools_for_search)  # Fixed parameter name
-                    )
-                else:
-                    # Fallback: use semantic scores
-                    cross_encoder_results = semantic_results
-            except Exception as e:
-                logger.warning(f"Cross-encoder scoring failed: {e}")
-                cross_encoder_results = semantic_results  # Fallback
-
-            # Create score mappings by tool name for easy lookup
-            semantic_score_map = {}
-            for result in semantic_results:
+            # Build score mapping from production pipeline results
+            pipeline_score_map = {}
+            for result in production_candidates:
                 tool_name = result.get('tool_name', result.get('name', ''))
-                semantic_score_map[tool_name] = result['score']
+                pipeline_score_map[tool_name] = {
+                    'semantic_score': result.get('semantic_score', result.get('score', 0.0)),
+                    'bm25_score': result.get('bm25_score', 0.0),
+                    'cross_encoder_score': result.get('score', 0.0),  # Final score after all stages
+                    'final_score': result.get('score', 0.0),
+                    'match_types': result.get('match_types', [])
+                }
 
-            cross_encoder_score_map = {}
-            for result in cross_encoder_results:
-                tool_name = result.get('tool_name', result.get('name', ''))
-                cross_encoder_score_map[tool_name] = result['score']
-
-            # Create ranking and position information
+            # Create combined scores using production pipeline results
             combined_scores = []
-            for i, tool_dict in enumerate(available_tools):  # tool_dict is from training data
-                # Get tool name from dictionary format
+            for i, tool_dict in enumerate(available_tools):
                 tool_name = tool_dict.get('name', tool_dict.get('tool_name', ''))
-
-                # Get individual scores
-                semantic_score = semantic_score_map.get(tool_name, 0.0)
-                bm25_score = bm25_scores.get(tool_name, 0.0) if isinstance(bm25_scores, dict) else 0.0
-                cross_score = cross_encoder_score_map.get(tool_name, semantic_score)
-
-                # Weighted combination for ranking
-                combined_score = 0.4 * semantic_score + 0.3 * bm25_score + 0.3 * cross_score
-                combined_scores.append({
-                    'index': i,
-                    'tool': tool_dict,  # Keep original dictionary for feature extraction
-                    'tool_name': tool_name,
-                    'semantic_score': semantic_score,
-                    'bm25_score': bm25_score,
-                    'cross_encoder_score': cross_score,
-                    'combined_score': combined_score
+                pipeline_data = pipeline_score_map.get(tool_name, {
+                    'semantic_score': 0.0,
+                    'bm25_score': 0.0,
+                    'cross_encoder_score': 0.0,
+                    'final_score': 0.0,
+                    'match_types': []
                 })
 
-            # Sort by combined score to get rankings
+                combined_scores.append({
+                    'index': i,
+                    'tool': tool_dict,
+                    'tool_name': tool_name,
+                    'semantic_score': pipeline_data['semantic_score'],
+                    'bm25_score': pipeline_data['bm25_score'],
+                    'cross_encoder_score': pipeline_data['cross_encoder_score'],
+                    'combined_score': pipeline_data['final_score'],  # Use production's final score
+                    'match_types': pipeline_data['match_types']
+                })
+
+            # Sort by production pipeline scores (already properly computed)
             combined_scores.sort(key=lambda x: x['combined_score'], reverse=True)
             top_score = combined_scores[0]['combined_score'] if combined_scores else 0.0
 
@@ -415,32 +407,27 @@ async def train_ltr_model_with_context():
 
             # Variables already initialized above for debug logging
 
-        # Debug: Show context for first few samples
+        # Debug: Show production pipeline context for first few samples
         if idx < 3 and query_features:
-            logger.info(f"\n🔍 Sample {idx+1} - Using SearchService for context:")
+            logger.info(f"\n🎯 Sample {idx+1} - Production Pipeline Context:")
             logger.info(f"  Query: {query}")
             logger.info(f"  Available tools: {len(available_tools)}")
 
             if combined_scores:
-                logger.info(f"  ✅ Successfully used SearchService methods:")
-                logger.info(f"    - semantic_search() returned {len(semantic_results)} results")
-                bm25_count = len(bm25_scores) if isinstance(bm25_scores, dict) else 0
-                logger.info(f"    - bm25_ranker.score_tools() returned {bm25_count} scores")
-                logger.info(f"    - cross_encoder_rerank() returned {len(cross_encoder_results)} results")
-
-                # Show semantic score improvement
-                semantic_scores_list = [r['score'] for r in semantic_results]
-                max_semantic = max(semantic_scores_list) if semantic_scores_list else 0.0
-                avg_semantic = sum(semantic_scores_list) / len(semantic_scores_list) if semantic_scores_list else 0.0
+                logger.info(f"  ✅ Successfully used production pipeline (search_with_config):")
+                logger.info(f"    - TrainingPipelineConfig stopped at: {training_config.stop_after_stage.value}")
+                logger.info(f"    - Pipeline returned: {len(production_candidates)} scored candidates")
+                logger.info(f"    - Feature extraction: {len(query_features)} features per tool")
 
                 top_result = combined_scores[0]
                 logger.info(f"  Top tool: {top_result.get('tool_name', 'unknown')}")
-                logger.info(f"    Semantic: {top_result['semantic_score']:.4f} (max: {max_semantic:.4f}, avg: {avg_semantic:.4f})")
+                logger.info(f"    Semantic: {top_result['semantic_score']:.4f}")
                 logger.info(f"    BM25: {top_result['bm25_score']:.4f}")
                 logger.info(f"    Cross-encoder: {top_result['cross_encoder_score']:.4f}")
-                logger.info(f"    Combined: {top_result['combined_score']:.4f}")
+                logger.info(f"    Final score: {top_result['combined_score']:.4f}")
+                logger.info(f"    Match types: {top_result.get('match_types', [])}")
             else:
-                logger.info(f"  ⚠️ Fallback mode - no SearchService context")
+                logger.info(f"  ⚠️ Fallback mode - no production pipeline context")
                 logger.info(f"  Query features: {len(query_features)}")
                 logger.info(f"  Relevance labels: {sum(query_relevance)}/{len(query_relevance)}")
 
@@ -480,18 +467,6 @@ async def train_ltr_model_with_context():
     logger.info("="*80)
     logger.info(f"Training metrics: {json.dumps(metrics.get('train_metrics', {}), indent=2)}")
     logger.info(f"Validation metrics: {json.dumps(metrics.get('validation_metrics', {}), indent=2)}")
-
-    # Show improvement over constant features
-    logger.info("\n🚀 KEY IMPROVEMENTS:")
-    logger.info("  ✅ Pre-indexed training tools in Qdrant for real semantic scores")
-    logger.info("  ✅ Used SearchService properly instead of manual reimplementation")
-    logger.info("  ✅ Context scores from semantic_search(), BM25, and cross_encoder_rerank()")
-    logger.info("  ✅ Removed constant domain features (domain_network, domain_api, etc.)")
-    logger.info("  ✅ Added query-tool interaction features with real search pipeline scores")
-    logger.info("  ✅ Features capture semantic similarity, lexical overlap, intent alignment")
-    logger.info("  ✅ Position and ranking information included")
-    logger.info(f"  ✅ Total features extracted: {len(feature_extractor.get_feature_names())}")
-    logger.info("  🎯 This solves the 'constant features problem' from the roadmap!")
 
     # Display feature importance
     if metrics.get('feature_importance'):

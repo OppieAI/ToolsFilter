@@ -169,6 +169,34 @@ class Settings(BaseSettings):
         default=30,
         description="Number of candidates to rerank with cross-encoder"
     )
+    
+    # Two-Stage Filtering Configuration
+    enable_two_stage_filtering: bool = Field(
+        default=False,
+        description="Enable two-stage filtering: aggressive first stage + precise reranking"
+    )
+    two_stage_stage1_threshold: float = Field(
+        default=0.10,
+        ge=0.0,
+        le=1.0,
+        description="Stage 1 threshold: lower threshold to cast wider net"
+    )
+    two_stage_stage1_limit: int = Field(
+        default=50,
+        ge=10,
+        le=200,
+        description="Stage 1 limit: higher limit for initial candidate retrieval"
+    )
+    two_stage_stage2_threshold: float = Field(
+        default=0.15,
+        ge=0.0,
+        le=1.0,
+        description="Stage 2 threshold: stricter threshold for precise filtering"
+    )
+    two_stage_enable_confidence_cutoff: bool = Field(
+        default=True,
+        description="Apply confidence-based result limiting in stage 2"
+    )
 
     # LTR (Learning to Rank) Configuration
     enable_ltr: bool = Field(
