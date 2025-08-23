@@ -18,6 +18,9 @@ from src.core.models import (
 from src.services.embeddings import EmbeddingService
 from src.services.vector_store import VectorStoreService
 from src.services.search_service import SearchService, SearchStrategy
+from src.services.search_pipeline_config import (
+    SearchPipelineConfig, get_production_config
+)
 from src.services.message_parser import MessageParser
 from src.services.embedding_enhancer import ToolEmbeddingEnhancer
 from src.services.query_enhancer import QueryEnhancer
@@ -83,6 +86,43 @@ def get_fallback_search_service() -> SearchService:
     """Get fallback search service instance."""
     from src.api.main import get_fallback_search_service as get_service
     return get_service()
+
+
+def _get_production_pipeline_config() -> SearchPipelineConfig:
+    """
+    Create production pipeline configuration based on current settings.
+    
+    This ensures the API uses the same pipeline as training and evaluation,
+    eliminating training-production pipeline mismatches.
+    """
+    # Determine enabled features based on settings
+    enable_ltr = getattr(settings, 'enable_ltr', True)
+    enable_cross_encoder = getattr(settings, 'enable_cross_encoder', True) 
+    enable_hybrid = getattr(settings, 'enable_hybrid_search', True)
+    enable_two_stage = getattr(settings, 'enable_two_stage_filtering', False)
+    
+    # Use two-stage config if explicitly enabled
+    if enable_two_stage:
+        from src.services.search_pipeline_config import get_two_stage_config
+        return get_two_stage_config(
+            stage1_threshold=getattr(settings, 'two_stage_stage1_threshold', 0.10),
+            stage1_limit=getattr(settings, 'two_stage_stage1_limit', 50),
+            stage2_threshold=getattr(settings, 'two_stage_stage2_threshold', 0.15),
+            enable_confidence_cutoff=getattr(settings, 'two_stage_enable_confidence_cutoff', True)
+        )
+    
+    # Use production config with appropriate feature flags
+    return get_production_config(
+        enable_ltr=enable_ltr,
+        enable_cross_encoder=enable_cross_encoder,
+        enable_bm25=enable_hybrid,  # BM25 is part of hybrid search
+        final_threshold=settings.primary_similarity_threshold,
+        final_limit=settings.max_tools_to_return,
+        semantic_weight=getattr(settings, 'semantic_weight', 0.7),
+        bm25_weight=getattr(settings, 'bm25_weight', 0.3),
+        cross_encoder_top_k=getattr(settings, 'cross_encoder_top_k', 30),
+        enable_confidence_cutoff=True  # Production should use confidence cutoffs
+    )
 
 
 @router.post("/tools/filter", response_model=ToolFilterResponse)
@@ -157,26 +197,22 @@ async def filter_tools(
                 tool_dict = tool.dict() if hasattr(tool, 'dict') else tool
                 available_tool_names.append(tool_dict.get("name", "unknown"))
         
-        # Search for similar tools with automatic fallback
+        # Get production pipeline configuration
         max_tools = request.max_tools or settings.max_tools_to_return
+        pipeline_config = _get_production_pipeline_config()
         
-        # Determine search strategy based on configuration
-        if getattr(settings, 'enable_cross_encoder', True) and getattr(settings, 'enable_hybrid_search', True):
-            strategy = SearchStrategy.HYBRID_CROSS_ENCODER
-        elif getattr(settings, 'enable_hybrid_search', True):
-            strategy = SearchStrategy.HYBRID
-        elif getattr(settings, 'enable_query_enhancement', True):
-            # Query enhancement uses multi-query semantic search
-            strategy = SearchStrategy.SEMANTIC
-        else:
-            strategy = SearchStrategy.SEMANTIC
+        # Override final_limit with request-specific limit
+        pipeline_config.final_limit = max_tools
         
-        logger.info(f"Using search strategy: {strategy.value}")
+        logger.info(f"Using production pipeline: LTR={pipeline_config.enable_ltr}, "
+                   f"CrossEncoder={pipeline_config.enable_cross_encoder}, "
+                   f"Hybrid={pipeline_config.enable_bm25}")
         
         try:
-            # Use search service for all search operations
-            if strategy == SearchStrategy.SEMANTIC and getattr(settings, 'enable_query_enhancement', True):
-                # Special case: multi-query search with query enhancement
+            # Check if query enhancement is enabled and semantic-only pipeline
+            if (getattr(settings, 'enable_query_enhancement', True) and 
+                not pipeline_config.enable_bm25 and not pipeline_config.enable_cross_encoder and not pipeline_config.enable_ltr):
+                # Special case: multi-query search with query enhancement for semantic-only
                 query_enhancer = QueryEnhancer()
                 enhanced_query = query_enhancer.enhance_query(request.messages, used_tools)
                 
@@ -194,23 +230,28 @@ async def filter_tools(
                 
                 # Store metadata
                 conversation_analysis.update(enhanced_query["metadata"])
-                conversation_analysis["search_method"] = "multi_query"
+                conversation_analysis["search_method"] = "multi_query_enhanced"
             else:
-                # Use unified search interface
-                similar_tools = await search_service.search(
+                # Use unified search pipeline with production configuration
+                similar_tools = await search_service.search_with_config(
                     messages=request.messages,
                     available_tools=request.available_tools,
-                    strategy=strategy,
-                    limit=max_tools * 2,  # Get more candidates for filtering
-                    score_threshold=settings.primary_similarity_threshold
+                    config=pipeline_config
                 )
                 
-                # Add metadata based on strategy
-                conversation_analysis["search_method"] = strategy.value
-                if strategy in [SearchStrategy.HYBRID, SearchStrategy.HYBRID_CROSS_ENCODER]:
-                    conversation_analysis["hybrid_method"] = settings.hybrid_search_method
-                if strategy in [SearchStrategy.CROSS_ENCODER, SearchStrategy.HYBRID_CROSS_ENCODER]:
-                    conversation_analysis["cross_encoder_enabled"] = True
+                # Add metadata based on pipeline configuration
+                conversation_analysis["search_method"] = "production_pipeline"
+                conversation_analysis["pipeline_config"] = {
+                    "enable_ltr": pipeline_config.enable_ltr,
+                    "enable_cross_encoder": pipeline_config.enable_cross_encoder,
+                    "enable_hybrid": pipeline_config.enable_bm25,
+                    "final_threshold": pipeline_config.final_threshold,
+                    "final_limit": pipeline_config.final_limit
+                }
+                if pipeline_config.enable_bm25:
+                    conversation_analysis["hybrid_method"] = "weighted"
+                    conversation_analysis["semantic_weight"] = pipeline_config.semantic_weight
+                    conversation_analysis["bm25_weight"] = pipeline_config.bm25_weight
             
             model_used = search_service.embedding_service.model
             
@@ -222,15 +263,17 @@ async def filter_tools(
                 logger.info("Attempting search with fallback model...")
                 
                 try:
-                    similar_tools = await fallback_search_service.search(
+                    # Use same pipeline config with fallback service
+                    fallback_config = pipeline_config
+                    fallback_config.final_threshold = settings.fallback_similarity_threshold
+                    
+                    similar_tools = await fallback_search_service.search_with_config(
                         messages=request.messages,
                         available_tools=request.available_tools,
-                        strategy=strategy,  # Use same strategy with fallback
-                        limit=max_tools * 2,
-                        score_threshold=settings.fallback_similarity_threshold
+                        config=fallback_config
                     )
                     
-                    conversation_analysis["search_method"] = f"{strategy.value}_fallback"
+                    conversation_analysis["search_method"] = "production_pipeline_fallback"
                     model_used = fallback_search_service.embedding_service.model
                     
                 except Exception as fallback_error:
@@ -285,13 +328,24 @@ async def filter_tools(
             "conversation_patterns": conversation_analysis["topics"]
         }
         
-        # Add search method information
+        # Add search method and pipeline information
         if "search_method" in conversation_analysis:
             metadata["search_method"] = conversation_analysis["search_method"]
-            if conversation_analysis["search_method"] in ["hybrid", "hybrid_fallback"]:
-                metadata["hybrid_method"] = conversation_analysis.get("hybrid_method", "weighted")
-                metadata["semantic_weight"] = settings.semantic_weight
-                metadata["bm25_weight"] = settings.bm25_weight
+            
+            # Add pipeline configuration details to metadata
+            if "pipeline_config" in conversation_analysis:
+                pipeline_info = conversation_analysis["pipeline_config"]
+                metadata.update({
+                    "pipeline_ltr_enabled": pipeline_info.get("enable_ltr", False),
+                    "pipeline_cross_encoder_enabled": pipeline_info.get("enable_cross_encoder", False), 
+                    "pipeline_hybrid_enabled": pipeline_info.get("enable_hybrid", False),
+                    "pipeline_final_threshold": pipeline_info.get("final_threshold", 0.13),
+                    "pipeline_final_limit": pipeline_info.get("final_limit", 10)
+                })
+                
+                if pipeline_info.get("enable_hybrid", False):
+                    metadata["semantic_weight"] = conversation_analysis.get("semantic_weight", settings.semantic_weight)
+                    metadata["bm25_weight"] = conversation_analysis.get("bm25_weight", settings.bm25_weight)
         
         response = ToolFilterResponse(
             recommended_tools=recommended_tools,
@@ -401,36 +455,50 @@ async def search_tools(
     Search for tools by text query.
     
     This endpoint allows searching for tools using natural language.
+    Uses the same production pipeline as the main filter endpoint.
     """
     try:
-        # Determine search strategy (for simple text search, use the configured default)
-        if getattr(settings, 'enable_cross_encoder', True) and getattr(settings, 'enable_hybrid_search', True):
-            strategy = SearchStrategy.HYBRID_CROSS_ENCODER
-        elif getattr(settings, 'enable_hybrid_search', True):
-            strategy = SearchStrategy.HYBRID
+        # Get production pipeline configuration
+        pipeline_config = _get_production_pipeline_config()
+        
+        # Override final_limit with request-specific limit
+        pipeline_config.final_limit = limit
+        
+        # Determine effective search method based on pipeline config
+        if pipeline_config.enable_ltr:
+            effective_strategy = "hybrid_ltr_pipeline"
+        elif pipeline_config.enable_cross_encoder and pipeline_config.enable_bm25:
+            effective_strategy = "hybrid_cross_encoder_pipeline" 
+        elif pipeline_config.enable_bm25:
+            effective_strategy = "hybrid_pipeline"
         else:
-            strategy = SearchStrategy.SEMANTIC
+            effective_strategy = "semantic_pipeline"
         
         try:
-            # Try primary search service first
-            similar_tools = await search_service.search(
+            # Try primary search service first with production pipeline
+            similar_tools = await search_service.search_with_config(
                 query=query,
-                strategy=strategy,
-                limit=limit
+                config=pipeline_config
             )
             model_used = search_service.embedding_service.model
+                
         except Exception as e:
             logger.warning(f"Primary search failed: {e}")
             
             # Try fallback if available
             if fallback_search_service:
                 logger.info("Attempting search with fallback model...")
-                similar_tools = await fallback_search_service.search(
+                
+                # Use same pipeline config with fallback threshold
+                fallback_config = pipeline_config
+                fallback_config.final_threshold = settings.fallback_similarity_threshold
+                
+                similar_tools = await fallback_search_service.search_with_config(
                     query=query,
-                    strategy=strategy,
-                    limit=limit
+                    config=fallback_config
                 )
                 model_used = fallback_search_service.embedding_service.model
+                effective_strategy = f"{effective_strategy}_fallback"
             else:
                 raise
         
@@ -438,7 +506,14 @@ async def search_tools(
             "query": query,
             "results": similar_tools,
             "model_used": model_used,
-            "search_strategy": strategy.value
+            "search_strategy": effective_strategy,
+            "pipeline_config": {
+                "enable_ltr": pipeline_config.enable_ltr,
+                "enable_cross_encoder": pipeline_config.enable_cross_encoder,
+                "enable_hybrid": pipeline_config.enable_bm25,
+                "final_threshold": pipeline_config.final_threshold,
+                "final_limit": pipeline_config.final_limit
+            }
         }
         
     except Exception as e:

@@ -23,10 +23,13 @@ from src.evaluation.evaluation_framework import (
     StrategyConfig       # For strategy-specific configuration
 )
 from src.services.search_service import SearchStrategy
+from src.services.search_pipeline_config import (
+    get_evaluation_config, get_production_config
+)
 from src.core.config import get_settings
 
 logging.basicConfig(
-    level=logging.DEBUG,  # Set to DEBUG to see NDCG debug messages
+    level=logging.INFO,  # Set to DEBUG to see NDCG debug messages
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -257,7 +260,7 @@ async def compare_strategies_efficiently():
             optimize_threshold=False  # Don't optimize per strategy
         ),
         reporting=ReportingConfig(
-            output_dir=Path("strategy_comparison_results"),
+            output_dir=Path("evaluation_results"),
             generate_comparison_table=True,  # Generate comparison table
             export_formats=["json", "markdown", "html"]
         )
@@ -267,34 +270,55 @@ async def compare_strategies_efficiently():
     print("\n1. Creating StrategyComparator...")
     comparator = StrategyComparator(base_config)
 
-    # Define strategies to compare with strategy-specific configurations
+    # Define strategies to compare with comprehensive pipeline configurations
     strategies_to_compare = [
         StrategyConfig(
             strategy=SearchStrategy.SEMANTIC,
-            threshold=0.13,    # Low threshold for evaluation to include all tools
-            max_tools=10     # High limit to accommodate available + noise tools
+            pipeline_config=get_evaluation_config(
+                enable_bm25=False,        # Semantic only
+                enable_cross_encoder=False,
+                enable_ltr=False,
+                final_threshold=0.13,
+                final_limit=10
+            ),
+            name="semantic_only"
         ),
         StrategyConfig(
             strategy=SearchStrategy.HYBRID,
-            threshold=0.13,    # Low threshold for evaluation
-            max_tools=10
+            pipeline_config=get_evaluation_config(
+                enable_cross_encoder=False,  # Hybrid without cross-encoder
+                enable_ltr=False,
+                final_threshold=0.13,
+                final_limit=10
+            ),
+            name="hybrid_basic"
         ),
         StrategyConfig(
             strategy=SearchStrategy.HYBRID_CROSS_ENCODER,
-            threshold=0.13,    # Low threshold for evaluation
-            max_tools=10
+            pipeline_config=get_evaluation_config(
+                enable_ltr=False,            # Hybrid with cross-encoder, no LTR
+                final_threshold=0.13,
+                final_limit=10
+            ),
+            name="hybrid_cross_encoder"
         ),
         StrategyConfig(
             strategy=SearchStrategy.HYBRID_LTR,
-            threshold=0.13,    # Low threshold for evaluation - LTR handles ranking
-            max_tools=10
+            pipeline_config=get_evaluation_config(
+                final_threshold=0.13,       # Full pipeline with LTR
+                final_limit=10
+            ),
+            name="hybrid_ltr_full"
         )
     ]
 
-    print(f"\n2. Strategies to compare: {[s.strategy.value for s in strategies_to_compare]}")
+    print(f"\n2. Strategies to compare: {[s.name for s in strategies_to_compare]}")
     print("   Configuration details:")
     for i, strategy_config in enumerate(strategies_to_compare, 1):
-        print(f"     {i}. {strategy_config.strategy.value}: threshold={strategy_config.threshold}, max_tools={strategy_config.max_tools}")
+        config = strategy_config.pipeline_config
+        print(f"     {i}. {strategy_config.name}: strategy={strategy_config.strategy.value}, "
+              f"threshold={config.final_threshold}, limit={config.final_limit}, "
+              f"ltr={config.enable_ltr}, cross_encoder={config.enable_cross_encoder}")
 
     # Progress callback to show which strategy is being tested
     def progress_callback(strategy_name: str, completed: int, total: int):
@@ -344,15 +368,6 @@ async def compare_strategies_efficiently():
         mrr = metrics.get('mean_mrr', 0)
         ndcg = metrics.get('mean_ndcg@5', 0)
         print(f"   {strategy_name:<30} {f1:<10.3f} {mrr:<10.3f} {ndcg:<10.3f}")
-
-    print("   " + "-"*60)
-
-    print("\n6. Key Benefits of StrategyComparator:")
-    print("   ✓ Data indexed only ONCE (not 4 times for 4 strategies)")
-    print("   ✓ All strategies tested on IDENTICAL data")
-    print("   ✓ Fair comparison with same test conditions")
-    print("   ✓ Option for parallel strategy execution")
-    print("   ✓ Automatic comparison metrics and reports")
 
     return comparison_result
 
@@ -542,13 +557,6 @@ async def main():
     # Old vs New comparison (optional - commented out by default)
     # print("\n[Example 4: Framework Comparison]")
     # run3 = await compare_old_vs_new()
-
-    print("\n" + "="*80)
-    print("MIGRATION COMPLETE!")
-    print("="*80)
-    print("\nThe new evaluation framework is ready to use.")
-    print("See example_usage.py for more examples of new features.")
-    print("\nKEY IMPROVEMENT: Use StrategyComparator for efficient multi-strategy testing!")
 
     # return [run1, run2, comparison]
     return [run1, comparison]

@@ -29,6 +29,10 @@ from .reporter import EvaluationReporter
 from .orchestrator import ExperimentTracker
 
 from src.services.search_service import SearchStrategy, SearchService
+from src.services.search_pipeline_config import (
+    SearchPipelineConfig, get_evaluation_config, get_two_stage_config, 
+    get_production_config
+)
 from src.services.vector_store import VectorStoreService
 from src.services.embeddings import EmbeddingService
 from src.core.models import ToolFilterRequest
@@ -38,51 +42,52 @@ from src.core.config import get_settings
 @dataclass
 class StrategyConfig:
     """
-    Configuration for a specific search strategy.
+    Modern configuration for search strategies using SearchPipelineConfig.
+    
+    This is the primary evaluation configuration that leverages the comprehensive
+    SearchPipelineConfig system for maximum flexibility and control.
+    
+    Examples:
+        # Evaluation with standard config
+        StrategyConfig(
+            strategy=SearchStrategy.HYBRID_LTR,
+            pipeline_config=get_evaluation_config(final_threshold=0.13),
+            name="standard_ltr"
+        )
+        
+        # Two-stage filtering evaluation  
+        StrategyConfig(
+            strategy=SearchStrategy.TWO_STAGE,
+            pipeline_config=get_two_stage_config(
+                stage1_threshold=0.10,
+                stage2_threshold=0.15
+            ),
+            name="two_stage_aggressive"
+        )
+        
+        # Custom pipeline for research
+        StrategyConfig(
+            strategy=SearchStrategy.HYBRID,
+            pipeline_config=SearchPipelineConfig(
+                enable_ltr=False,
+                final_threshold=0.20,
+                enable_confidence_cutoff=True
+            ),
+            name="research_hybrid"
+        )
 
     Attributes:
-        strategy: Search strategy (mandatory)
-        threshold: Similarity threshold override (optional, uses settings default)
-        max_tools: Maximum tools to return override (optional, uses settings default)
-        enable_query_enhancement: Query enhancement override (optional)
+        strategy: Search strategy identifier (for compatibility)
+        pipeline_config: Comprehensive pipeline configuration (mandatory)
+        name: Human-readable name for identification in results (mandatory)
     """
-    strategy: SearchStrategy  # Mandatory
-    threshold: Optional[float] = None  # Optional override
-    max_tools: Optional[int] = None    # Optional override
-    enable_query_enhancement: Optional[bool] = None  # Optional override
+    strategy: SearchStrategy  # Strategy identifier (mainly for compatibility)
+    pipeline_config: SearchPipelineConfig  # Comprehensive pipeline control
+    name: str  # Human-readable name for results
 
-    def apply_to_search_config(self, base_config: SearchStrategyConfig, settings) -> SearchStrategyConfig:
-        """
-        Apply strategy-specific overrides to base search configuration.
-
-        Args:
-            base_config: Base search configuration
-            settings: Application settings
-
-        Returns:
-            Modified search configuration for this strategy
-        """
-        from copy import deepcopy
-        config = deepcopy(base_config)
-
-        # Apply mandatory strategy
-        config.strategy = self.strategy
-
-        # Apply optional overrides, fall back to settings defaults
-        config.primary_similarity_threshold = (
-            self.threshold if self.threshold is not None
-            else settings.primary_similarity_threshold
-        )
-
-        config.max_tools = (
-            self.max_tools if self.max_tools is not None
-            else getattr(base_config, 'max_tools', 10)
-        )
-
-        if self.enable_query_enhancement is not None:
-            config.enable_query_enhancement = self.enable_query_enhancement
-
-        return config
+    def get_display_name(self) -> str:
+        """Get display name for results and logging."""
+        return self.name or f"{self.strategy.value}_config"
 
 
 class StrategyComparator:
@@ -270,24 +275,12 @@ class StrategyComparator:
         Returns:
             Evaluation run results
         """
-        strategy_name = strategy_config.strategy.value
+        strategy_name = strategy_config.get_display_name()
         logger.info(f"Evaluating strategy: {strategy_name}")
 
-        # Apply strategy-specific configuration
-        settings = get_settings()
-        strategy_search_config = strategy_config.apply_to_search_config(
-            self.base_config.search, settings
-        )
-
-        # Create strategy-specific test context
-        strategy_test_context = TestContext(
-            vector_store=test_context.vector_store,
-            embedding_service=test_context.embedding_service,
-            search_service=test_context.search_service,
-            search_config=strategy_search_config,  # Use strategy-specific config
-            noise_config=test_context.noise_config,
-            noise_pool=test_context.noise_pool
-        )
+        # Use the shared test context directly (no strategy-specific config needed)
+        # The pipeline configuration will be passed to search_with_config
+        strategy_test_context = test_context
 
         run_id = str(uuid.uuid4())
         run = EvaluationRun(
@@ -297,7 +290,11 @@ class StrategyComparator:
             results=[],
             config={
                 **self.base_config.to_dict(),
-                "search": strategy_search_config.to_dict()
+                "pipeline_config": {
+                    "strategy": strategy_config.strategy.value,
+                    "name": strategy_config.name,
+                    "pipeline_params": strategy_config.pipeline_config.__dict__
+                }
             },
             start_time=datetime.now()
         )
@@ -336,7 +333,12 @@ class StrategyComparator:
                 execution_time_ms=result.execution_time_ms,
                 status=result.status,
                 error=result.error,
-                metadata={**result.metadata, "strategy": strategy_name}
+                metadata={
+                    **result.metadata, 
+                    "strategy": strategy_config.strategy.value,
+                    "strategy_name": strategy_name,
+                    "pipeline_config": strategy_config.pipeline_config.__dict__
+                }
             )
             enhanced_results.append(enhanced_result)
 
@@ -433,20 +435,18 @@ class StrategyComparator:
             # Convert to Tool objects
             tools = [Tool(**tool_dict) for tool_dict in tools_with_noise]
 
-            # Create request
+            # Create request - use pipeline config's final_limit for max_tools
             request = ToolFilterRequest(
                 messages=[{"role": "user", "content": test_case.query}],
                 available_tools=tools,
-                max_tools=test_context.search_config.max_tools
+                max_tools=strategy_config.pipeline_config.final_limit
             )
 
-            # Perform search with specified strategy (config already applied to test_context)
-            recommended_tools = await test_context.search_service.search(
+            # Perform search with pipeline configuration
+            recommended_tools = await test_context.search_service.search_with_config(
                 messages=request.messages,
                 available_tools=request.available_tools,
-                strategy=strategy_config.strategy,  # Use the strategy from config
-                limit=request.max_tools,
-                score_threshold=test_context.search_config.primary_similarity_threshold
+                config=strategy_config.pipeline_config
             )
 
             # Debug: Log the structure of recommended_tools
