@@ -117,6 +117,13 @@ class LTRFeatureExtractor:
         # 6. Tool metadata features
         if self.config.enable_metadata_features:
             features.update(self._extract_metadata_features(tool, context))
+        
+        # 7. Query-tool interaction features (NEW - replaces constant domain features)
+        # These features capture the relationship between query and tool, solving the
+        # problem of constant features like 'domain_network' that don't vary with queries
+        features.update(self._extract_query_tool_interaction_features(
+            query, tool_name, tool_description, tool_parameters, context
+        ))
 
         return features
 
@@ -168,17 +175,23 @@ class LTRFeatureExtractor:
         # Generate dummy features to get all names
         dummy_tool = {
             "function": {
-                "name": "test",
-                "description": "test",
-                "parameters": {"properties": {"param1": {}}}
+                "name": "test_api_function",
+                "description": "test function for api calls",
+                "parameters": {
+                    "properties": {"param1": {"description": "test parameter"}},
+                    "required": ["param1"]
+                }
             }
         }
         dummy_context = {
             "semantic_score": 0.5,
             "bm25_score": 0.5,
-            "cross_encoder_score": 0.5
+            "cross_encoder_score": 0.5,
+            "initial_rank": 1.0,
+            "initial_score": 0.5,
+            "top_score": 0.8
         }
-        features = self.extract_features("test", dummy_tool, dummy_context)
+        features = self.extract_features("get user data from api", dummy_tool, dummy_context)
         return sorted(features.keys())
 
     # --- Helper methods for tool information extraction ---
@@ -386,89 +399,171 @@ class LTRFeatureExtractor:
     def _extract_metadata_features(
         self, tool: Dict[str, Any], context: Dict[str, Any]
     ) -> Dict[str, float]:
-        """Extract tool metadata features from actual tool properties and patterns."""
+        """Extract tool metadata features - keeping only non-constant features."""
         features = {}
 
         # Extract tool name for pattern analysis
         tool_name = tool.get('name', '')
         description = tool.get('description', '')
-
-        # 1. Tool Operation Type Detection (CRUD patterns)
-        crud_patterns = {
-            'create': ['create', 'add', 'new', 'insert', 'post', 'generate', 'make'],
-            'read': ['get', 'read', 'fetch', 'list', 'search', 'find', 'query', 'view'],
-            'update': ['update', 'modify', 'edit', 'change', 'patch', 'set'],
-            'delete': ['delete', 'remove', 'destroy', 'clear', 'drop', 'uninstall']
-        }
-
         name_lower = tool_name.lower()
         desc_lower = description.lower()
 
-        for op_type, patterns in crud_patterns.items():
-            feature_key = f'is_{op_type}_operation'
-            features[feature_key] = float(any(p in name_lower or p in desc_lower for p in patterns))
-
-        # 2. Tool Domain Detection
-        domain_patterns = {
-            'file_system': ['file', 'directory', 'folder', 'path', 'disk'],
-            'network': ['http', 'api', 'request', 'url', 'endpoint', 'webhook'],
-            'database': ['database', 'sql', 'query', 'table', 'schema', 'collection'],
-            'auth': ['auth', 'login', 'token', 'permission', 'credential'],
-            'data_processing': ['parse', 'transform', 'convert', 'process', 'analyze'],
-            'search': ['search', 'find', 'query', 'filter', 'match'],
-            'system': ['system', 'process', 'service', 'command', 'shell'],
-        }
-
-        for domain, patterns in domain_patterns.items():
-            feature_key = f'domain_{domain}'
-            features[feature_key] = float(any(p in name_lower or p in desc_lower for p in patterns))
-
-        # 3. Tool Complexity Indicators
-        # Check if tool name suggests batch/bulk operations
-        features['is_batch_operation'] = float(any(
-            p in name_lower for p in ['batch', 'bulk', 'multiple', 'all', 'list']
-        ))
-
-        # Check if tool suggests async operations
-        features['is_async_operation'] = float(any(
-            p in name_lower for p in ['async', 'await', 'promise', 'callback', 'queue']
-        ))
-
-        # 4. Tool Risk Level (based on operation type)
-        risk_indicators = ['delete', 'remove', 'drop', 'destroy', 'write', 'modify', 'admin', 'sudo']
-        features['risk_level'] = sum(1 for ind in risk_indicators if ind in name_lower) / len(risk_indicators)
-
-        # 7. Contextual features (if available in context)
-        # Use random values if not provided in context to simulate realistic variations
-        if context and 'usage_count' in context:
-            features['tool_popularity'] = context['usage_count'] / 100.0
-        else:
-            # Generate random popularity score (biased towards lower values for realism)
-            # Using beta distribution to create realistic popularity distribution
-            features['tool_popularity'] = random.betavariate(2, 100)  # Most tools have low popularity
-
-        if context and 'days_since_use' in context:
-            features['tool_recency'] = context['days_since_use'] / 365.0
-        else:
-            # Generate random recency (exponential distribution - recent use is less likely)
-            features['tool_recency'] = min(random.expovariate(0.5), 2.0) / 2.0  # Normalize to [0, 1]
-
-        # 8. Check for common tool prefixes/suffixes
-        common_prefixes = ['get_', 'set_', 'create_', 'delete_', 'update_', 'list_', 'find_']
-        features['has_common_prefix'] = float(any(tool_name.startswith(p) for p in common_prefixes))
-
-        common_suffixes = ['_api', '_service', '_handler', '_manager', '_controller']
-        features['has_common_suffix'] = float(any(tool_name.endswith(s) for s in common_suffixes))
-
-        # 9. Tool specificity (longer, more specific names usually indicate specialized tools)
+        # Tool specificity (longer, more specific names usually indicate specialized tools)
         features['name_specificity'] = min(len(tool_name) / 50.0, 1.0) if tool_name else 0.0  # Normalize to [0, 1]
 
-        # 10. Keep original features that might be in the tool definition
-        features['is_custom_tool'] = float(tool.get('custom', False))
-        features['is_verified_tool'] = float(tool.get('verified', False))
+        # Position features from context (initial ranking)
+        features['initial_rank'] = context.get('initial_rank', 0.0) / 100.0  # Normalize
+        features['initial_score'] = context.get('initial_score', 0.0)
+        
+        # Score difference from top result
+        top_score = context.get('top_score', features['initial_score'])
+        features['score_diff_from_top'] = max(0.0, top_score - features['initial_score'])
 
         return features
 
+    def _extract_query_tool_interaction_features(
+        self, 
+        query: str, 
+        tool_name: str, 
+        tool_description: str, 
+        tool_parameters: Dict[str, Any],
+        context: Dict[str, Any]
+    ) -> Dict[str, float]:
+        """Extract query-tool interaction features that capture relationships."""
+        features = {}
+        
+        query_tokens = set(query.lower().split())
+        tool_tokens = set(tool_name.lower().split('_')) if tool_name else set()
+        desc_tokens = set(tool_description.lower().split()) if tool_description else set()
+        
+        # 1. Lexical overlap features
+        if tool_tokens:
+            features['query_tool_name_overlap'] = len(query_tokens & tool_tokens) / max(len(query_tokens), 1)
+        else:
+            features['query_tool_name_overlap'] = 0.0
+            
+        if desc_tokens:
+            features['query_desc_overlap'] = len(query_tokens & desc_tokens) / max(len(query_tokens), 1)
+            # Jaccard similarity
+            union_tokens = query_tokens | desc_tokens
+            features['jaccard_similarity'] = len(query_tokens & desc_tokens) / len(union_tokens) if union_tokens else 0.0
+        else:
+            features['query_desc_overlap'] = 0.0
+            features['jaccard_similarity'] = 0.0
+        
+        # 2. Semantic features (using available similarity scores)
+        # If semantic embeddings are available in context, use them
+        # Otherwise, fall back to lexical similarity as proxy
+        query_tool_sim = context.get('query_tool_cosine_sim', features.get('jaccard_similarity', 0.0))
+        query_desc_sim = context.get('query_desc_cosine_sim', features.get('query_desc_overlap', 0.0))
+        
+        features['query_tool_cosine_sim'] = query_tool_sim
+        features['query_desc_cosine_sim'] = query_desc_sim
+        
+        # 3. Intent matching - verb alignment
+        query_verbs = self._extract_action_verbs(query)
+        features['verb_match'] = float(any(verb in tool_name.lower() for verb in query_verbs)) if query_verbs else 0.0
+        
+        # Action alignment based on CRUD operations
+        features['action_alignment'] = self._calculate_action_alignment(query, tool_name, tool_description)
+        
+        # 4. Length ratios
+        features['query_length_ratio'] = len(query) / max(len(tool_description), 1) if tool_description else 0.0
+        features['name_length_ratio'] = len(query) / max(len(tool_name), 1) if tool_name else 0.0
+        
+        # 5. Parameter matching
+        features['param_relevance'] = self._calculate_param_relevance(query, tool_parameters)
+        features['required_param_match'] = self._match_required_params(query, tool_parameters.get('required', []))
+        
+        return features
+    
+    def _extract_action_verbs(self, query: str) -> List[str]:
+        """Extract action verbs from query."""
+        # Common action verbs in API/tool contexts
+        action_verbs = {
+            'get', 'fetch', 'retrieve', 'find', 'search', 'list', 'show', 'read',
+            'create', 'add', 'new', 'make', 'generate', 'build', 'post',
+            'update', 'modify', 'edit', 'change', 'set', 'patch', 'put',
+            'delete', 'remove', 'destroy', 'clear', 'drop',
+            'send', 'upload', 'download', 'copy', 'move', 'sync',
+            'validate', 'verify', 'check', 'test', 'parse', 'analyze'
+        }
+        
+        query_words = query.lower().split()
+        return [word for word in query_words if word in action_verbs]
+    
+    def _calculate_action_alignment(self, query: str, tool_name: str, tool_description: str) -> float:
+        """Calculate how well query action aligns with tool action."""
+        query_lower = query.lower()
+        tool_text = (tool_name + ' ' + tool_description).lower()
+        
+        # CRUD alignment patterns (fixed: use tuples as keys, not lists)
+        alignments = [
+            # (query_patterns, tool_patterns)
+            (
+                ['get', 'fetch', 'retrieve', 'find', 'search', 'list', 'show'],
+                ['get', 'fetch', 'retrieve', 'find', 'search', 'list', 'show', 'read']
+            ),
+            (
+                ['create', 'add', 'new', 'make', 'generate', 'build'],
+                ['create', 'add', 'new', 'make', 'generate', 'build', 'post']
+            ),
+            (
+                ['update', 'modify', 'edit', 'change', 'set'],
+                ['update', 'modify', 'edit', 'change', 'set', 'patch', 'put']
+            ),
+            (
+                ['delete', 'remove', 'destroy', 'clear'],
+                ['delete', 'remove', 'destroy', 'clear', 'drop']
+            )
+        ]
+        
+        max_alignment = 0.0
+        for query_patterns, tool_patterns in alignments:
+            query_match = any(pattern in query_lower for pattern in query_patterns)
+            tool_match = any(pattern in tool_text for pattern in tool_patterns)
+            if query_match and tool_match:
+                max_alignment = 1.0
+                break
+            elif query_match or tool_match:
+                max_alignment = max(max_alignment, 0.5)
+        
+        return max_alignment
+    
+    def _calculate_param_relevance(self, query: str, parameters: Dict[str, Any]) -> float:
+        """Calculate how relevant tool parameters are to the query."""
+        if not parameters or 'properties' not in parameters:
+            return 0.0
+        
+        properties = parameters['properties']
+        if not properties:
+            return 0.0
+        
+        query_tokens = set(query.lower().split())
+        
+        relevant_params = 0
+        for param_name, param_info in properties.items():
+            param_text = param_name.lower()
+            if isinstance(param_info, dict) and 'description' in param_info:
+                param_text += ' ' + param_info['description'].lower()
+            
+            # Check if any query token appears in parameter name or description
+            param_tokens = set(param_text.split())
+            if query_tokens & param_tokens:
+                relevant_params += 1
+        
+        return relevant_params / len(properties)
+    
+    def _match_required_params(self, query: str, required_params: List[str]) -> float:
+        """Check how many required parameters are mentioned in query."""
+        if not required_params:
+            return 0.0
+        
+        query_lower = query.lower()
+        matched_params = sum(1 for param in required_params if param.lower() in query_lower)
+        
+        return matched_params / len(required_params)
+    
     def _calculate_param_complexity(self, properties: Dict[str, Any]) -> float:
         """Calculate complexity score for parameters."""
         def get_depth(obj, current_depth=0):

@@ -271,17 +271,17 @@ async def compare_strategies_efficiently():
     strategies_to_compare = [
         StrategyConfig(
             strategy=SearchStrategy.SEMANTIC,
-            threshold=0.0,    # Low threshold for evaluation to include all tools
-            max_tools=20     # High limit to accommodate available + noise tools
+            threshold=0.13,    # Low threshold for evaluation to include all tools
+            max_tools=10     # High limit to accommodate available + noise tools
         ),
         StrategyConfig(
             strategy=SearchStrategy.HYBRID,
-            threshold=0.0,    # Low threshold for evaluation
-            max_tools=20
+            threshold=0.13,    # Low threshold for evaluation
+            max_tools=10
         ),
         StrategyConfig(
             strategy=SearchStrategy.HYBRID_CROSS_ENCODER,
-            threshold=0.0,    # Low threshold for evaluation
+            threshold=0.13,    # Low threshold for evaluation
             max_tools=10
         ),
         StrategyConfig(
