@@ -1,13 +1,17 @@
-# PTR Tool Filter
+# OppieAI Tool Filter
 
-A Precision-driven Tool Recommendation (PTR) system for filtering MCP (Model Context Protocol) tools based on conversation context using semantic search.
+A Precision-driven Tool Recommendation (PTR) system for filtering MCP (Model Context Protocol) tools based on conversation context.
+
+Inspired by [PTR Paper](https://arxiv.org/html/2411.09613v1)
+
+Developed by [OppieAI](https://oppie.ai)
 
 ## Features
 
 ### Core Capabilities
 - 🚀 **Multi-Stage Search Pipeline**: Semantic + BM25 + Cross-Encoder + LTR ranking
 - 🎯 **High-Performance Results**: Perfect P@1 and MRR across all search strategies
-- 🧠 **Learning-to-Rank**: XGBoost model with 46+ engineered features (NDCG@10: 0.62)
+- 🧠 **Learning-to-Rank**: XGBoost model with 46+ engineered features (NDCG@10: 0.975)
 - 🔧 **OpenAI Function Calling Compatible**: Flat tool structure following OpenAI specification
 
 ### Infrastructure & Performance
@@ -199,7 +203,7 @@ print(response.json())
 
 ## Performance
 
-### Latest Evaluation Results (August 2023)
+### Latest Evaluation Results (August 2025)
 
 **Search Strategy Comparison**:
 
