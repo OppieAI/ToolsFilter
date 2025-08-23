@@ -1,6 +1,6 @@
-# OppieAI Tool Filter
+# OppieAI MCP Tool Filter
 
-A Precision-driven Tool Recommendation (PTR) system for filtering MCP (Model Context Protocol) tools based on conversation context.
+A Precision-driven Tool Recommendation (PTR) system for filtering MCP (Model Context Protocol) tools based on conversation context. Fetch only relevant tool for the ongoing conversation and save cost while increasing the precision of your LLM Response.
 
 Inspired by [PTR Paper](https://arxiv.org/html/2411.09613v1)
 
