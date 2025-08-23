@@ -139,7 +139,7 @@ response = requests.post(
             },
             {
                 "type": "function",
-                "name": "find", 
+                "name": "find",
                 "description": "Find files by name",
                 "parameters": {
                     "type": "object",
@@ -251,17 +251,17 @@ print(response.json())
 └────────┬────────┘     └──────────────────┘     └─────────┬───────┘
          │                                                  │
          │                    ┌─────────────────────────────┼─────────┐
-         │                    │                             │         │
+         │                    │                  │          │         │
 ┌────────▼────────┐    ┌──────▼─────┐  ┌─────────▼────────┐ │ ┌───────▼──────┐
 │  Redis Cache    │    │ Embedding  │  │   Qdrant Vector  │ │ │ LTR Reranker │
 │                 │    │ Service    │  │     Database     │ │ │  (XGBoost)   │
 │ • Query Cache   │    │ (LiteLLM)  │  │                  │ │ │              │
 │ • Results Cache │    │ • Voyage   │  │ • Semantic Search│ │ │ • 46 Features│
-│ • Tool Index    │    │ • OpenAI   │  │ • BM25 Hybrid   │ │ │ • NDCG@10 Opt│
-└─────────────────┘    │ • Fallback │  │ • Cross-Encoder │ │ │              │
+│ • Tool Index    │    │ • OpenAI   │  │ • BM25 Hybrid    │ │ │ • NDCG@10 Opt│
+└─────────────────┘    │ • Fallback │  │ • Cross-Encoder  │ │ │              │
                        └────────────┘  └──────────────────┘ │ └──────────────┘
-                                                           │
-                                    ┌─────────────────────┘
+                                                            │
+                                    ┌───────────────────────┘
                                     │
                              ┌──────▼──────┐
                              │ Multi-Stage │
@@ -277,7 +277,7 @@ print(response.json())
 ### Search Strategies
 
 1. **semantic_only**: Pure vector similarity search
-2. **hybrid_basic**: BM25 + semantic search combination  
+2. **hybrid_basic**: BM25 + semantic search combination
 3. **hybrid_cross_encoder**: + Cross-encoder reranking
 4. **hybrid_ltr_full**: + Learning-to-Rank optimization
 
