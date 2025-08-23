@@ -11,7 +11,7 @@ from typing import List, Dict, Any
 from src.evaluation.toolbench_evaluator import ToolBenchEvaluator
 from src.core.config import get_settings
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
@@ -54,7 +54,7 @@ async def generate_training_data_from_toolbench(
     evaluator = ToolBenchEvaluator()
 
     noise_tools_pool = await evaluator.load_random_toolbench_tools(
-      target_total=500 * 3  # Load 3x the needed amount for variety
+      target_total=50 * 3  # Load 3x the needed amount for variety
     )
 
     # Process test cases from all files
@@ -119,7 +119,7 @@ async def generate_training_data_from_toolbench(
                     logger.warning(f"Error converting API: {e}")
                     continue
 
-            noise_tools = random.sample(noise_tools_pool, 300)
+            noise_tools = random.sample(noise_tools_pool, 100)
             for tool in noise_tools:
               try:
                 tool_dict = tool.model_dump()
@@ -179,7 +179,7 @@ async def train_ltr_model_with_context():
     # Generate or load training data from all available files
     training_data = await generate_training_data_from_toolbench(
         instruction_files=None,  # Use all G*.json files
-        num_queries_per_file=150,  # Reduced from 150 due to search overhead
+        num_queries_per_file=10,  # Reduced from 150 due to search overhead
         save_path="data/ltr_training_data.json"
     )
 
@@ -187,9 +187,9 @@ async def train_ltr_model_with_context():
         logger.warning(f"Only {len(training_data)} training samples. Consider generating more data.")
 
     # Limit training data for faster testing (remove this in production)
-    training_data = training_data[:20]  # Use first 20 samples for faster testing
-    logger.info(f"Using {len(training_data)} training samples for LTR training (limited for testing)")
-    logger.info("NOTE: Remove the training_data limit for full production training")
+    # training_data = training_data[:20]  # Use first 20 samples for faster testing
+    # logger.info(f"Using {len(training_data)} training samples for LTR training (limited for testing)")
+    # logger.info("NOTE: Remove the training_data limit for full production training")
 
 
 

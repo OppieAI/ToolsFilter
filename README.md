@@ -4,15 +4,20 @@ A Precision-driven Tool Recommendation (PTR) system for filtering MCP (Model Con
 
 ## Features
 
-- 🚀 Fast semantic search using vector embeddings
-- 🔧 Support for multiple embedding providers (Voyage AI, OpenAI, Cohere)
-- 💾 Intelligent caching with Redis
-- 🎯 High-performance vector search with Qdrant
-- 📊 Built-in evaluation metrics with RAGAS
-- 🔄 Compatible with Claude and OpenAI message formats
-- 🔀 Model-specific collections to prevent embedding dimension conflicts
-- 📝 Collection metadata tracking for model versioning
-- 🔁 Automatic fallback to secondary embedding model on failures
+### Core Capabilities
+- 🚀 **Multi-Stage Search Pipeline**: Semantic + BM25 + Cross-Encoder + LTR ranking
+- 🎯 **High-Performance Results**: Perfect P@1 and MRR across all search strategies
+- 🧠 **Learning-to-Rank**: XGBoost model with 46+ engineered features (NDCG@10: 0.62)
+- 🔧 **OpenAI Function Calling Compatible**: Flat tool structure following OpenAI specification
+
+### Infrastructure & Performance
+- ⚡ **Multiple Embedding Providers**: Voyage AI, OpenAI, Cohere with automatic fallback
+- 💾 **Intelligent Multi-Layer Caching**: Redis for queries, results, and tool indices
+- 🎯 **Qdrant Vector Database**: High-performance vector search with model-specific collections
+- 📊 **Comprehensive Evaluation**: Built-in framework with F1, MRR, NDCG@k metrics
+- 🔄 **Message Format Compatibility**: Claude and OpenAI conversation formats
+- 📝 **Collection Metadata Tracking**: Model versioning and automatic dimension handling
+- 🔁 **Robust Fallback Mechanisms**: Secondary embedding models and graceful degradation
 
 ## Quick Start
 
@@ -121,17 +126,29 @@ response = requests.post(
         "available_tools": [
             {
                 "type": "function",
-                "function": {
-                    "name": "grep",
-                    "description": "Search for patterns in files"
-                }
+                "name": "grep",
+                "description": "Search for patterns in files",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "pattern": {"type": "string", "description": "Search pattern"}
+                    },
+                    "required": ["pattern"]
+                },
+                "strict": true
             },
             {
-                "type": "function", 
-                "function": {
-                    "name": "find",
-                    "description": "Find files by name"
-                }
+                "type": "function",
+                "name": "find", 
+                "description": "Find files by name",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "File name pattern"}
+                    },
+                    "required": ["name"]
+                },
+                "strict": true
             }
         ]
     }
@@ -182,51 +199,120 @@ print(response.json())
 
 ## Performance
 
-### Current Metrics (MVP)
+### Latest Evaluation Results (August 2023)
 
-- **Average Latency**: ~1.7s (target: <100ms)
-- **Precision@5**: 40% (target: 60%)
-- **Recall@5**: 13%
-- **F1 Score**: 20%
+**Search Strategy Comparison**:
+
+| Strategy | F1 Score | MRR | P@1 | NDCG@10 | Best For |
+|----------|----------|-----|-----|---------|----------|
+| **hybrid_basic** | **0.359** ⭐ | 1.000 | 1.000 | **0.975** ⭐ | General-purpose, balanced performance |
+| semantic_only | 0.328 | **1.000** ⭐ | **1.000** ⭐ | 0.870 | Simple queries, exact matches |
+| hybrid_cross_encoder | 0.359 | 1.000 | 1.000 | 0.964 | Complex queries requiring reranking |
+| hybrid_ltr_full | 0.359 | 1.000 | 1.000 | 0.942 | Learning-based optimization |
+
+⭐ = Best performer for that metric
+
+📊 **[View Detailed Report](saved_eval_reports/comparison_20250823_153715.html)**
+
+**Key Achievements**:
+- **Perfect Precision@1**: All strategies achieve 1.000 P@1
+- **Perfect MRR**: All strategies achieve 1.000 Mean Reciprocal Rank
+- **Strong NDCG Performance**: Up to 0.975 NDCG@10 with hybrid_basic
+- **Consistent F1 Scores**: 0.328-0.359 across different approaches
+
+### LTR Model Performance
+
+**Learning-to-Rank Training Results**:
+- **Cross-Validation NDCG@10**: 0.6167 ± 0.0567
+- **Training Data**: 18,354 samples with 46 features
+- **Top Features**: action_alignment (32.7%), query_type_analyze (33.9%), exact_name_match (19.5%)
+- **Training Speed**: <5 seconds with XGBoost
 
 ### Optimization Roadmap
 
-1. Pre-index all tools on startup
-2. Implement connection pooling
-3. Add batch embedding generation
-4. Optimize vector search parameters
+✅ **Completed**:
+1. ~~Pre-index all tools on startup~~ - Implemented vector store caching
+2. ~~Implement connection pooling~~ - Added Redis and Qdrant connection pooling
+3. ~~Add batch embedding generation~~ - Optimized embedding pipeline
+4. ~~Optimize vector search parameters~~ - Tuned similarity thresholds
+
+🎯 **In Progress**:
+1. Improve LTR model with better class balancing
+2. Enhance feature engineering for interaction signals
+3. Optimize NDCG@5 performance for top-precision use cases
 
 ## Architecture
 
+### Search Pipeline Architecture
+
 ```
-┌─────────────────┐     ┌──────────────────┐
-│   FastAPI App   │────▶│  Message Parser  │
-└────────┬────────┘     └──────────────────┘
-         │                        │
-         │              ┌─────────▼────────┐
-         │              │ Embedding Service│
-         │              │    (LiteLLM)     │
-         │              └─────────┬────────┘
-         │                        │
-┌────────▼────────┐     ┌─────────▼────────┐
-│  Redis Cache    │◀────│   Qdrant DB      │
-└─────────────────┘     └──────────────────┘
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│   FastAPI App   │────▶│  Message Parser  │────▶│ Search Pipeline │
+└────────┬────────┘     └──────────────────┘     └─────────┬───────┘
+         │                                                  │
+         │                    ┌─────────────────────────────┼─────────┐
+         │                    │                             │         │
+┌────────▼────────┐    ┌──────▼─────┐  ┌─────────▼────────┐ │ ┌───────▼──────┐
+│  Redis Cache    │    │ Embedding  │  │   Qdrant Vector  │ │ │ LTR Reranker │
+│                 │    │ Service    │  │     Database     │ │ │  (XGBoost)   │
+│ • Query Cache   │    │ (LiteLLM)  │  │                  │ │ │              │
+│ • Results Cache │    │ • Voyage   │  │ • Semantic Search│ │ │ • 46 Features│
+│ • Tool Index    │    │ • OpenAI   │  │ • BM25 Hybrid   │ │ │ • NDCG@10 Opt│
+└─────────────────┘    │ • Fallback │  │ • Cross-Encoder │ │ │              │
+                       └────────────┘  └──────────────────┘ │ └──────────────┘
+                                                           │
+                                    ┌─────────────────────┘
+                                    │
+                             ┌──────▼──────┐
+                             │ Multi-Stage │
+                             │  Filtering  │
+                             │             │
+                             │ 1. Semantic │
+                             │ 2. BM25     │
+                             │ 3. Rerank   │
+                             │ 4. LTR      │
+                             └─────────────┘
 ```
+
+### Search Strategies
+
+1. **semantic_only**: Pure vector similarity search
+2. **hybrid_basic**: BM25 + semantic search combination  
+3. **hybrid_cross_encoder**: + Cross-encoder reranking
+4. **hybrid_ltr_full**: + Learning-to-Rank optimization
 
 ## Development
 
-### Running Tests
+### Running Tests & Evaluation
 
 ```bash
 # Run unit tests
 pytest tests/ -v
 
-# Run evaluation
+# Run comprehensive evaluation with all strategies
 docker exec ptr_api python -m src.evaluation.run_evaluation
+
+# Run strategy comparison
+docker exec ptr_api python -m src.evaluation.evaluation_framework.comparison
+
+# Train LTR model
+docker exec ptr_api python -m src.scripts.train_ltr
+
+# Run ToolBench evaluation
+docker exec ptr_api python -m src.evaluation.toolbench_evaluator
 
 # Run simple API test
 python test_api.py
 ```
+
+### Latest Evaluation Reports
+
+Refer to the latest comparison report: `evaluation_results/comparison_20250823_153715.markdown`
+
+Key findings:
+- **hybrid_basic** strategy performs best overall (F1: 0.359, NDCG@10: 0.975)
+- All strategies achieve perfect P@1 and MRR (1.000)
+- LTR model shows consistent performance with cross-validation NDCG@10: 0.6167 ± 0.0567
 
 ### Code Quality
 

@@ -17,6 +17,7 @@ services:
       - ./tests:/app/tests
       - ./scripts:/app/scripts
       - ./data:/app/data
+      - ./models:/app/models
       # Prevent overwriting installed packages
       - /app/.venv
     command: ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

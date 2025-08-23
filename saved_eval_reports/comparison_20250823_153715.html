@@ -1,0 +1,969 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Evaluation Comparison Report</title>
+    <meta charset="utf-8">
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .chart {
+            margin: 30px 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+        }
+        .best {
+            background: #e8f5e9;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Evaluation Comparison Report</h1>
+        
+        <h2>Runs Compared</h2>
+        <ul>
+            <li><strong>strategy_semantic_only</strong> (ID: 0412acca-4453-421e-a283-7a85d428efbb)</li>
+<li><strong>strategy_hybrid_basic</strong> (ID: 6e5f36a5-e062-442e-9a67-4887376db7ab)</li>
+<li><strong>strategy_hybrid_cross_encoder</strong> (ID: 65c62ec8-230c-480a-a898-75ace2bd44f4)</li>
+<li><strong>strategy_hybrid_ltr_full</strong> (ID: 4ab22c52-1d12-4238-a75e-c9f098dd5698)</li>
+        </ul>
+        
+        <h2>Metrics Comparison</h2>
+        <div id="comparison-chart" class="chart"></div>
+        
+        <h2>Detailed Comparison Table</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Metric</th>
+                    <th>strategy_semantic_only</th>
+<th>strategy_hybrid_basic</th>
+<th>strategy_hybrid_cross_encoder</th>
+<th>strategy_hybrid_ltr_full</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td><strong>max_accuracy</strong></td><td class="">0.2000</td><td class="best">0.3000</td><td class="">0.3000</td><td class="">0.3000</td></tr>
+<tr><td><strong>max_execution_time_ms</strong></td><td class="best">10019.8219</td><td class="">5594.3804</td><td class="">9380.9192</td><td class="">7991.7414</td></tr>
+<tr><td><strong>max_expected_in_top10</strong></td><td>2</td><td>3</td><td>3</td><td>3</td></tr>
+<tr><td><strong>max_expected_in_top3</strong></td><td>2</td><td>3</td><td>3</td><td>3</td></tr>
+<tr><td><strong>max_expected_in_top5</strong></td><td>2</td><td>3</td><td>3</td><td>3</td></tr>
+<tr><td><strong>max_f1_score</strong></td><td class="">0.3333</td><td class="best">0.4615</td><td class="">0.4615</td><td class="">0.4615</td></tr>
+<tr><td><strong>max_false_negatives</strong></td><td>1</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td><strong>max_false_positives</strong></td><td>8</td><td>8</td><td>8</td><td>8</td></tr>
+<tr><td><strong>max_first_relevant_rank</strong></td><td>1</td><td>1</td><td>1</td><td>1</td></tr>
+<tr><td><strong>max_map</strong></td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>max_mrr</strong></td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>max_ndcg@10</strong></td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>max_ndcg@3</strong></td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>max_ndcg@5</strong></td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>max_p@1</strong></td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>max_p@3</strong></td><td class="">0.6667</td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>max_p@5</strong></td><td class="">0.4000</td><td class="best">0.6000</td><td class="">0.6000</td><td class="">0.6000</td></tr>
+<tr><td><strong>max_precision</strong></td><td class="">0.2000</td><td class="best">0.3000</td><td class="">0.3000</td><td class="">0.3000</td></tr>
+<tr><td><strong>max_r@1</strong></td><td class="best">0.5000</td><td class="">0.5000</td><td class="">0.5000</td><td class="">0.5000</td></tr>
+<tr><td><strong>max_r@3</strong></td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>max_r@5</strong></td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>max_recall</strong></td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>max_true_positives</strong></td><td>2</td><td>3</td><td>3</td><td>3</td></tr>
+<tr><td><strong>mean_accuracy</strong></td><td class="">0.2000</td><td class="best">0.2200</td><td class="">0.2200</td><td class="">0.2200</td></tr>
+<tr><td><strong>mean_execution_time_ms</strong></td><td class="">5158.6008</td><td class="">3105.0951</td><td class="best">8454.8681</td><td class="">7287.9414</td></tr>
+<tr><td><strong>mean_expected_in_top10</strong></td><td class="">2.0000</td><td class="best">2.2000</td><td class="">2.2000</td><td class="">2.2000</td></tr>
+<tr><td><strong>mean_expected_in_top3</strong></td><td class="">1.4000</td><td class="best">2.0000</td><td class="">2.0000</td><td class="">2.0000</td></tr>
+<tr><td><strong>mean_expected_in_top5</strong></td><td class="">1.8000</td><td class="best">2.2000</td><td class="">2.0000</td><td class="">2.0000</td></tr>
+<tr><td><strong>mean_f1_score</strong></td><td class="">0.3282</td><td class="best">0.3590</td><td class="">0.3590</td><td class="">0.3590</td></tr>
+<tr><td><strong>mean_false_negatives</strong></td><td class="best">0.2000</td><td class="">0.0000</td><td class="">0.0000</td><td class="">0.0000</td></tr>
+<tr><td><strong>mean_false_positives</strong></td><td class="best">8.0000</td><td class="">7.8000</td><td class="">7.8000</td><td class="">7.8000</td></tr>
+<tr><td><strong>mean_first_relevant_rank</strong></td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>mean_map</strong></td><td class="">0.7667</td><td class="best">0.9500</td><td class="">0.9286</td><td class="">0.8867</td></tr>
+<tr><td><strong>mean_mrr</strong></td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>mean_ndcg@10</strong></td><td class="">0.8703</td><td class="best">0.9754</td><td class="">0.9635</td><td class="">0.9420</td></tr>
+<tr><td><strong>mean_ndcg@3</strong></td><td class="">0.7210</td><td class="best">0.9226</td><td class="">0.9226</td><td class="">0.9066</td></tr>
+<tr><td><strong>mean_ndcg@5</strong></td><td class="">0.8266</td><td class="best">0.9754</td><td class="">0.9226</td><td class="">0.9066</td></tr>
+<tr><td><strong>mean_p@1</strong></td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>mean_p@3</strong></td><td class="">0.4667</td><td class="best">0.6667</td><td class="">0.6667</td><td class="">0.6667</td></tr>
+<tr><td><strong>mean_p@5</strong></td><td class="">0.3600</td><td class="best">0.4400</td><td class="">0.4000</td><td class="">0.4000</td></tr>
+<tr><td><strong>mean_precision</strong></td><td class="">0.2000</td><td class="best">0.2200</td><td class="">0.2200</td><td class="">0.2200</td></tr>
+<tr><td><strong>mean_r@1</strong></td><td class="best">0.4667</td><td class="">0.4667</td><td class="">0.4667</td><td class="">0.4667</td></tr>
+<tr><td><strong>mean_r@3</strong></td><td class="">0.6333</td><td class="best">0.9000</td><td class="">0.9000</td><td class="">0.9000</td></tr>
+<tr><td><strong>mean_r@5</strong></td><td class="">0.8333</td><td class="best">1.0000</td><td class="">0.9000</td><td class="">0.9000</td></tr>
+<tr><td><strong>mean_recall</strong></td><td class="">0.9333</td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>mean_true_positives</strong></td><td class="">2.0000</td><td class="best">2.2000</td><td class="">2.2000</td><td class="">2.2000</td></tr>
+<tr><td><strong>median_accuracy</strong></td><td class="best">0.2000</td><td class="">0.2000</td><td class="">0.2000</td><td class="">0.2000</td></tr>
+<tr><td><strong>median_execution_time_ms</strong></td><td class="">3774.4210</td><td class="">2515.2380</td><td class="best">8891.1166</td><td class="">7465.6622</td></tr>
+<tr><td><strong>median_expected_in_top10</strong></td><td class="best">2.0000</td><td class="">2.0000</td><td class="">2.0000</td><td class="">2.0000</td></tr>
+<tr><td><strong>median_expected_in_top3</strong></td><td class="">1.0000</td><td class="best">2.0000</td><td class="">2.0000</td><td class="">2.0000</td></tr>
+<tr><td><strong>median_expected_in_top5</strong></td><td class="best">2.0000</td><td class="">2.0000</td><td class="">2.0000</td><td class="">2.0000</td></tr>
+<tr><td><strong>median_f1_score</strong></td><td class="best">0.3333</td><td class="">0.3333</td><td class="">0.3333</td><td class="">0.3333</td></tr>
+<tr><td><strong>median_false_negatives</strong></td><td class="best">0.0000</td><td class="">0.0000</td><td class="">0.0000</td><td class="">0.0000</td></tr>
+<tr><td><strong>median_false_positives</strong></td><td class="best">8.0000</td><td class="">8.0000</td><td class="">8.0000</td><td class="">8.0000</td></tr>
+<tr><td><strong>median_first_relevant_rank</strong></td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>median_map</strong></td><td class="">0.7500</td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>median_mrr</strong></td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>median_ndcg@10</strong></td><td class="">0.8772</td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>median_ndcg@3</strong></td><td class="">0.6131</td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>median_ndcg@5</strong></td><td class="">0.8772</td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>median_p@1</strong></td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>median_p@3</strong></td><td class="">0.3333</td><td class="best">0.6667</td><td class="">0.6667</td><td class="">0.6667</td></tr>
+<tr><td><strong>median_p@5</strong></td><td class="best">0.4000</td><td class="">0.4000</td><td class="">0.4000</td><td class="">0.4000</td></tr>
+<tr><td><strong>median_precision</strong></td><td class="best">0.2000</td><td class="">0.2000</td><td class="">0.2000</td><td class="">0.2000</td></tr>
+<tr><td><strong>median_r@1</strong></td><td class="best">0.5000</td><td class="">0.5000</td><td class="">0.5000</td><td class="">0.5000</td></tr>
+<tr><td><strong>median_r@3</strong></td><td class="">0.5000</td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>median_r@5</strong></td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>median_recall</strong></td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>median_true_positives</strong></td><td class="best">2.0000</td><td class="">2.0000</td><td class="">2.0000</td><td class="">2.0000</td></tr>
+<tr><td><strong>min_accuracy</strong></td><td class="best">0.2000</td><td class="">0.2000</td><td class="">0.2000</td><td class="">0.2000</td></tr>
+<tr><td><strong>min_execution_time_ms</strong></td><td class="">3479.5539</td><td class="">2227.6354</td><td class="best">6945.6081</td><td class="">6209.6553</td></tr>
+<tr><td><strong>min_expected_in_top10</strong></td><td>2</td><td>2</td><td>2</td><td>2</td></tr>
+<tr><td><strong>min_expected_in_top3</strong></td><td>1</td><td>1</td><td>1</td><td>1</td></tr>
+<tr><td><strong>min_expected_in_top5</strong></td><td>1</td><td>2</td><td>1</td><td>1</td></tr>
+<tr><td><strong>min_f1_score</strong></td><td class="">0.3077</td><td class="best">0.3333</td><td class="">0.3333</td><td class="">0.3333</td></tr>
+<tr><td><strong>min_false_negatives</strong></td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td><strong>min_false_positives</strong></td><td>8</td><td>7</td><td>7</td><td>7</td></tr>
+<tr><td><strong>min_first_relevant_rank</strong></td><td>1</td><td>1</td><td>1</td><td>1</td></tr>
+<tr><td><strong>min_map</strong></td><td class="">0.6667</td><td class="best">0.7500</td><td class="">0.6429</td><td class="">0.6000</td></tr>
+<tr><td><strong>min_mrr</strong></td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>min_ndcg@10</strong></td><td class="">0.7654</td><td class="best">0.8772</td><td class="">0.8175</td><td class="">0.7904</td></tr>
+<tr><td><strong>min_ndcg@3</strong></td><td class="best">0.6131</td><td class="">0.6131</td><td class="">0.6131</td><td class="">0.6131</td></tr>
+<tr><td><strong>min_ndcg@5</strong></td><td class="">0.6131</td><td class="best">0.8772</td><td class="">0.6131</td><td class="">0.6131</td></tr>
+<tr><td><strong>min_p@1</strong></td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>min_p@3</strong></td><td class="best">0.3333</td><td class="">0.3333</td><td class="">0.3333</td><td class="">0.3333</td></tr>
+<tr><td><strong>min_p@5</strong></td><td class="">0.2000</td><td class="best">0.4000</td><td class="">0.2000</td><td class="">0.2000</td></tr>
+<tr><td><strong>min_precision</strong></td><td class="best">0.2000</td><td class="">0.2000</td><td class="">0.2000</td><td class="">0.2000</td></tr>
+<tr><td><strong>min_r@1</strong></td><td class="best">0.3333</td><td class="">0.3333</td><td class="">0.3333</td><td class="">0.3333</td></tr>
+<tr><td><strong>min_r@3</strong></td><td class="best">0.5000</td><td class="">0.5000</td><td class="">0.5000</td><td class="">0.5000</td></tr>
+<tr><td><strong>min_r@5</strong></td><td class="">0.5000</td><td class="best">1.0000</td><td class="">0.5000</td><td class="">0.5000</td></tr>
+<tr><td><strong>min_recall</strong></td><td class="">0.6667</td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+<tr><td><strong>min_true_positives</strong></td><td>2</td><td>2</td><td>2</td><td>2</td></tr>
+<tr><td><strong>std_accuracy</strong></td><td class="">0.0000</td><td class="best">0.0400</td><td class="">0.0400</td><td class="">0.0400</td></tr>
+<tr><td><strong>std_execution_time_ms</strong></td><td class="best">2492.3698</td><td class="">1253.3486</td><td class="">868.8987</td><td class="">601.1283</td></tr>
+<tr><td><strong>std_expected_in_top10</strong></td><td class="">0.0000</td><td class="best">0.4000</td><td class="">0.4000</td><td class="">0.4000</td></tr>
+<tr><td><strong>std_expected_in_top3</strong></td><td class="">0.4899</td><td class="best">0.6325</td><td class="">0.6325</td><td class="">0.6325</td></tr>
+<tr><td><strong>std_expected_in_top5</strong></td><td class="">0.4000</td><td class="">0.4000</td><td class="best">0.6325</td><td class="">0.6325</td></tr>
+<tr><td><strong>std_f1_score</strong></td><td class="">0.0103</td><td class="best">0.0513</td><td class="">0.0513</td><td class="">0.0513</td></tr>
+<tr><td><strong>std_false_negatives</strong></td><td class="best">0.4000</td><td class="">0.0000</td><td class="">0.0000</td><td class="">0.0000</td></tr>
+<tr><td><strong>std_false_positives</strong></td><td class="">0.0000</td><td class="best">0.4000</td><td class="">0.4000</td><td class="">0.4000</td></tr>
+<tr><td><strong>std_first_relevant_rank</strong></td><td class="best">0.0000</td><td class="">0.0000</td><td class="">0.0000</td><td class="">0.0000</td></tr>
+<tr><td><strong>std_map</strong></td><td class="">0.1225</td><td class="">0.1000</td><td class="">0.1429</td><td class="best">0.1572</td></tr>
+<tr><td><strong>std_mrr</strong></td><td class="best">0.0000</td><td class="">0.0000</td><td class="">0.0000</td><td class="">0.0000</td></tr>
+<tr><td><strong>std_ndcg@10</strong></td><td class="">0.0767</td><td class="">0.0491</td><td class="">0.0730</td><td class="best">0.0819</td></tr>
+<tr><td><strong>std_ndcg@3</strong></td><td class="">0.1515</td><td class="best">0.1547</td><td class="">0.1547</td><td class="">0.1500</td></tr>
+<tr><td><strong>std_ndcg@5</strong></td><td class="">0.1300</td><td class="">0.0491</td><td class="best">0.1547</td><td class="">0.1500</td></tr>
+<tr><td><strong>std_p@1</strong></td><td class="best">0.0000</td><td class="">0.0000</td><td class="">0.0000</td><td class="">0.0000</td></tr>
+<tr><td><strong>std_p@3</strong></td><td class="">0.1633</td><td class="best">0.2108</td><td class="">0.2108</td><td class="">0.2108</td></tr>
+<tr><td><strong>std_p@5</strong></td><td class="">0.0800</td><td class="">0.0800</td><td class="best">0.1265</td><td class="">0.1265</td></tr>
+<tr><td><strong>std_precision</strong></td><td class="">0.0000</td><td class="best">0.0400</td><td class="">0.0400</td><td class="">0.0400</td></tr>
+<tr><td><strong>std_r@1</strong></td><td class="best">0.0667</td><td class="">0.0667</td><td class="">0.0667</td><td class="">0.0667</td></tr>
+<tr><td><strong>std_r@3</strong></td><td class="">0.1944</td><td class="best">0.2000</td><td class="">0.2000</td><td class="">0.2000</td></tr>
+<tr><td><strong>std_r@5</strong></td><td class="best">0.2108</td><td class="">0.0000</td><td class="">0.2000</td><td class="">0.2000</td></tr>
+<tr><td><strong>std_recall</strong></td><td class="best">0.1333</td><td class="">0.0000</td><td class="">0.0000</td><td class="">0.0000</td></tr>
+<tr><td><strong>std_true_positives</strong></td><td class="">0.0000</td><td class="best">0.4000</td><td class="">0.4000</td><td class="">0.4000</td></tr>
+<tr><td><strong>success_rate</strong></td><td class="best">1.0000</td><td class="">1.0000</td><td class="">1.0000</td><td class="">1.0000</td></tr>
+            </tbody>
+        </table>
+        
+        <h2>Best Performers</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Metric</th>
+                    <th>Best Run</th>
+                    <th>Value</th>
+                </tr>
+            </thead>
+            <tbody>
+                
+                    <tr>
+                        <td>mean_first_relevant_rank</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>median_first_relevant_rank</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>std_first_relevant_rank</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>0.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>mean_ndcg@3</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.9226</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>median_ndcg@3</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>std_ndcg@3</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.1547</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>min_ndcg@3</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>0.6131</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>max_ndcg@3</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>mean_expected_in_top3</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>2.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>median_expected_in_top3</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>2.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>std_expected_in_top3</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.6325</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>mean_false_positives</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>8.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>median_false_positives</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>8.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>std_false_positives</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.4000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>mean_precision</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.2200</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>median_precision</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>0.2000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>std_precision</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.0400</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>min_precision</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>0.2000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>max_precision</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.3000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>mean_r@1</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>0.4667</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>median_r@1</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>0.5000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>std_r@1</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>0.0667</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>min_r@1</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>0.3333</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>max_r@1</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>0.5000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>mean_ndcg@10</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.9754</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>median_ndcg@10</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>std_ndcg@10</td>
+                        <td><strong>strategy_hybrid_ltr_full</strong></td>
+                        <td>0.0819</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>min_ndcg@10</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.8772</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>max_ndcg@10</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>mean_p@1</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>median_p@1</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>std_p@1</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>0.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>min_p@1</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>max_p@1</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>mean_r@3</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.9000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>median_r@3</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>std_r@3</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.2000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>min_r@3</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>0.5000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>max_r@3</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>mean_map</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.9500</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>median_map</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>std_map</td>
+                        <td><strong>strategy_hybrid_ltr_full</strong></td>
+                        <td>0.1572</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>min_map</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.7500</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>max_map</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>mean_mrr</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>median_mrr</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>std_mrr</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>0.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>min_mrr</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>max_mrr</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>mean_false_negatives</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>0.2000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>median_false_negatives</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>0.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>std_false_negatives</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>0.4000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>mean_p@3</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.6667</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>median_p@3</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.6667</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>std_p@3</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.2108</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>min_p@3</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>0.3333</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>max_p@3</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>mean_expected_in_top10</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>2.2000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>median_expected_in_top10</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>2.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>std_expected_in_top10</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.4000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>mean_r@5</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>median_r@5</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>std_r@5</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>0.2108</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>min_r@5</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>max_r@5</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>mean_ndcg@5</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.9754</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>median_ndcg@5</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>std_ndcg@5</td>
+                        <td><strong>strategy_hybrid_cross_encoder</strong></td>
+                        <td>0.1547</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>min_ndcg@5</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.8772</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>max_ndcg@5</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>mean_accuracy</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.2200</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>median_accuracy</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>0.2000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>std_accuracy</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.0400</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>min_accuracy</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>0.2000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>max_accuracy</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.3000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>mean_execution_time_ms</td>
+                        <td><strong>strategy_hybrid_cross_encoder</strong></td>
+                        <td>8454.8681</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>median_execution_time_ms</td>
+                        <td><strong>strategy_hybrid_cross_encoder</strong></td>
+                        <td>8891.1166</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>std_execution_time_ms</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>2492.3698</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>min_execution_time_ms</td>
+                        <td><strong>strategy_hybrid_cross_encoder</strong></td>
+                        <td>6945.6081</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>max_execution_time_ms</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>10019.8219</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>mean_recall</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>median_recall</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>std_recall</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>0.1333</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>min_recall</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>max_recall</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>mean_true_positives</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>2.2000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>median_true_positives</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>2.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>std_true_positives</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.4000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>mean_p@5</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.4400</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>median_p@5</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>0.4000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>std_p@5</td>
+                        <td><strong>strategy_hybrid_cross_encoder</strong></td>
+                        <td>0.1265</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>min_p@5</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.4000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>max_p@5</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.6000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>mean_f1_score</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.3590</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>median_f1_score</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>0.3333</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>std_f1_score</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.0513</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>min_f1_score</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.3333</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>max_f1_score</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>0.4615</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>mean_expected_in_top5</td>
+                        <td><strong>strategy_hybrid_basic</strong></td>
+                        <td>2.2000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>median_expected_in_top5</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>2.0000</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>std_expected_in_top5</td>
+                        <td><strong>strategy_hybrid_cross_encoder</strong></td>
+                        <td>0.6325</td>
+                    </tr>
+                
+
+                    <tr>
+                        <td>success_rate</td>
+                        <td><strong>strategy_semantic_only</strong></td>
+                        <td>1.0000</td>
+                    </tr>
+                
+            </tbody>
+        </table>
+    </div>
+    
+    <script>
+        
+            var data = [
+                {
+                    x: ['mean_f1_score', 'mean_precision', 'mean_recall', 'mean_mrr', 'mean_p@1'],
+                    y: [0.3282051282051282, 0.2, 0.9333333333333332, 1.0, 1.0],
+                    type: 'bar',
+                    name: 'strategy_semantic_only'
+                }
+            ,
+                {
+                    x: ['mean_f1_score', 'mean_precision', 'mean_recall', 'mean_mrr', 'mean_p@1'],
+                    y: [0.3589743589743589, 0.22000000000000003, 1.0, 1.0, 1.0],
+                    type: 'bar',
+                    name: 'strategy_hybrid_basic'
+                }
+            ,
+                {
+                    x: ['mean_f1_score', 'mean_precision', 'mean_recall', 'mean_mrr', 'mean_p@1'],
+                    y: [0.3589743589743589, 0.22000000000000003, 1.0, 1.0, 1.0],
+                    type: 'bar',
+                    name: 'strategy_hybrid_cross_encoder'
+                }
+            ,
+                {
+                    x: ['mean_f1_score', 'mean_precision', 'mean_recall', 'mean_mrr', 'mean_p@1'],
+                    y: [0.3589743589743589, 0.22000000000000003, 1.0, 1.0, 1.0],
+                    type: 'bar',
+                    name: 'strategy_hybrid_ltr_full'
+                }
+            ];
+            
+            var layout = {
+                title: 'Key Metrics Comparison',
+                xaxis: { title: 'Metric' },
+                yaxis: { title: 'Value' },
+                barmode: 'group'
+            };
+            
+            Plotly.newPlot('comparison-chart', data, layout);
+        
+    </script>
+</body>
+</html>
+        
