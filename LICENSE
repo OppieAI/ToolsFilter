@@ -1,0 +1,67 @@
+OppieAI MCP Tool Filter License
+
+Copyright (c) 2024 OppieAI
+
+DUAL LICENSE TERMS
+
+This software is licensed under a dual licensing model:
+
+1. NON-COMMERCIAL LICENSE
+   
+   Permission is hereby granted, free of charge, to any person or organization
+   obtaining a copy of this software and associated documentation files (the "Software"),
+   to use, copy, modify, and distribute the Software for NON-COMMERCIAL purposes only,
+   subject to the following conditions:
+   
+   - The above copyright notice and this permission notice shall be included in all
+     copies or substantial portions of the Software.
+   - The Software may not be used for commercial purposes without obtaining a 
+     separate commercial license from OppieAI.
+   - Any modifications or derivative works must also be licensed under these same terms.
+   - Attribution to OppieAI must be maintained in all copies and derivative works.
+
+2. COMMERCIAL LICENSE
+   
+   For commercial use, including but not limited to:
+   - Use in commercial products or services
+   - Integration into proprietary software
+   - Use by for-profit organizations
+   - Revenue-generating applications or deployments
+   
+   A separate commercial license must be obtained from OppieAI.
+   Contact sales@oppie.ai for commercial licensing terms and pricing.
+
+DEFINITIONS
+
+"Commercial use" means any use of the Software that is primarily intended for 
+commercial advantage or monetary compensation, including but not limited to:
+- Selling products or services that incorporate the Software
+- Using the Software in a business environment for profit-generating activities
+- Offering the Software as a service (SaaS) for monetary compensation
+- Integration into commercial products for distribution
+
+"Non-commercial use" means use for research, education, personal projects, 
+academic purposes, or other activities not primarily intended for commercial 
+advantage or monetary compensation.
+
+DISCLAIMER
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+CONTACT
+
+For questions about licensing or to obtain a commercial license:
+Email: sales@oppie.ai
+Website: https://oppie.ai
+
+---
+
+This license allows free use for open source projects, research, education, and 
+personal projects while requiring commercial entities to obtain appropriate 
+licensing for business use.

@@ -410,4 +410,11 @@ Inspired by [PTR Paper](https://arxiv.org/html/2411.09613v1)
 
 ## License
 
-[MIT License](LICENSE)
+This project uses a **dual licensing model**:
+
+- **Non-Commercial Use**: Free for research, education, and personal projects
+- **Commercial Use**: Requires a separate commercial license
+
+See [LICENSE](LICENSE) for full terms.
+
+For commercial licensing, contact: **sales@oppie.ai**
