@@ -288,14 +288,19 @@ class MetricsCalculator:
         Returns:
             NDCG@k score
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         dcg = 0.0
         idcg = 0.0
         
         # Calculate DCG@k
+        relevant_positions = []
         for i in range(min(k, len(recommended_list))):
             if recommended_list[i] in expected_set:
                 relevance = 1.0  # Binary relevance
                 dcg += relevance / math.log2(i + 2)  # i+2 because log2(1)=0
+                relevant_positions.append(i + 1)  # 1-indexed for logging
         
         # Calculate ideal DCG@k
         num_expected = len(expected_set)
@@ -303,7 +308,25 @@ class MetricsCalculator:
             idcg += 1.0 / math.log2(i + 2)
         
         # NDCG = DCG / IDCG
-        return dcg / idcg if idcg > 0 else 0.0
+        ndcg_result = dcg / idcg if idcg > 0 else 0.0
+        
+        # Debug logging for NDCG@5 specifically
+        if k == 5:
+            logger.debug(f"NDCG@{k} calculation:")
+            logger.debug(f"  Expected tools: {list(expected_set)}")
+            logger.debug(f"  Recommended (first {k}): {recommended_list[:k]}")
+            logger.debug(f"  Relevant positions: {relevant_positions}")
+            logger.debug(f"  DCG: {dcg:.6f}, IDCG: {idcg:.6f}, NDCG: {ndcg_result:.6f}")
+            
+            # Check for potential issues
+            if len(recommended_list) == 0:
+                logger.debug("  WARNING: Empty recommended list!")
+            if len(expected_set) == 0:
+                logger.debug("  WARNING: Empty expected set!")
+            if dcg > 0 and ndcg_result == 0:
+                logger.debug("  ERROR: DCG > 0 but NDCG = 0!")
+        
+        return ndcg_result
     
     def _calculate_precision_at_k(
         self,

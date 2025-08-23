@@ -26,7 +26,7 @@ from src.services.search_service import SearchStrategy
 from src.core.config import get_settings
 
 logging.basicConfig(
-    level=logging.INFO,  # Set to DEBUG to see all debug messages
+    level=logging.DEBUG,  # Set to DEBUG to see NDCG debug messages
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -311,7 +311,7 @@ async def compare_strategies_efficiently():
     print("   Best performers by metric:")
 
     # Find best strategy for each key metric
-    for metric in ['mean_f1_score', 'mean_mrr', 'mean_ndcg_at_5']:
+    for metric in ['mean_f1_score', 'mean_mrr', 'mean_ndcg@5']:
         best_strategy = None
         best_value = -1
 
@@ -342,7 +342,7 @@ async def compare_strategies_efficiently():
 
         f1 = metrics.get('mean_f1_score', 0)
         mrr = metrics.get('mean_mrr', 0)
-        ndcg = metrics.get('mean_ndcg_at_5', 0)
+        ndcg = metrics.get('mean_ndcg@5', 0)
         print(f"   {strategy_name:<30} {f1:<10.3f} {mrr:<10.3f} {ndcg:<10.3f}")
 
     print("   " + "-"*60)
