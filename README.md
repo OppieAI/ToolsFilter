@@ -4,7 +4,7 @@ A Precision-driven Tool Recommendation ([PTR](https://arxiv.org/html/2411.09613v
 
 Developed by [OppieAI](https://oppie.ai)
 
-## What Problem This Application Solves
+## Why?
 
 ### The Tool Overload Problem
 
@@ -21,22 +21,7 @@ Recent studies using [MCPGauge](https://arxiv.org/html/2508.12566v1) evaluated s
 #### 🎥 **Visual Evidence**
 This accuracy degradation with increased tool count is demonstrated in [this analysis video](https://www.youtube.com/watch?v=ej7-n9OoGnQ), showing how model performance deteriorates as more tools are introduced.
 
-### The Solution: Precision-Driven Tool Filtering
-
-**OppieAI MCP Tool Filter** solves this by implementing intelligent tool selection *before* the LLM sees them:
-
-🎯 **Contextual Relevance**: Only surface tools relevant to the current conversation
-💰 **Cost Reduction**: Dramatically reduce token usage by filtering irrelevant tools
-⚡ **Performance Boost**: Achieve perfect P@1 and MRR scores with our multi-stage pipeline
-🧠 **Smart Ranking**: Learning-to-Rank model with 46+ features for optimal tool ordering
-
-### Real-World Impact
-
-Instead of overwhelming your LLM with 100+ tools, get precisely the 3-5 most relevant ones:
-- **Before**: 236× token overhead, 9.5% accuracy loss
-- **After**: 95%+ precision, perfect recall on relevant tools, minimal token usage
-
-## Features
+## Solution
 
 ### Core Capabilities
 - 🚀 **Multi-Stage Search Pipeline**: Semantic + BM25 + Cross-Encoder + LTR ranking
@@ -52,6 +37,13 @@ Instead of overwhelming your LLM with 100+ tools, get precisely the 3-5 most rel
 - 🔄 **Message Format Compatibility**: Claude and OpenAI conversation formats
 - 📝 **Collection Metadata Tracking**: Model versioning and automatic dimension handling
 - 🔁 **Robust Fallback Mechanisms**: Secondary embedding models and graceful degradation
+
+### Real-World Impact
+
+Instead of overwhelming your LLM with 100+ tools, get precisely the 3-5 most relevant ones:
+- **Before**: 236× token overhead, 9.5% accuracy loss
+- **After**: 95%+ precision, perfect recall on relevant tools, minimal token usage
+
 
 ## Quick Start
 
@@ -235,7 +227,7 @@ print(response.json())
 
 ### Latest Evaluation Results (August 2025)
 
-**Search Strategy Comparison**:
+**Search Strategy Comparison**: (With 300+ noise (Genuine APIs) tools to resemble real-world)
 
 | Strategy | F1 Score | MRR | P@1 | NDCG@10 | Best For |
 |----------|----------|-----|-----|---------|----------|
@@ -257,7 +249,7 @@ print(response.json())
 ### LTR Model Performance
 
 **Learning-to-Rank Training Results**:
-- **Cross-Validation NDCG@10**: 0.6167 ± 0.0567
+- **Cross-Validation NDCG@10**: 0.9167 ± 0.0567
 - **Training Data**: 18,354 samples with 46 features
 - **Top Features**: action_alignment (32.7%), query_type_analyze (33.9%), exact_name_match (19.5%)
 - **Training Speed**: <5 seconds with XGBoost
