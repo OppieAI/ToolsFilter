@@ -4,6 +4,51 @@ A Precision-driven Tool Recommendation ([PTR](https://arxiv.org/html/2411.09613v
 
 Developed by [OppieAI](https://oppie.ai)
 
+## 🎥 Explainer Video
+
+[![OppieAI's ToolFilter](https://markdown-videos-api.jorgenkh.no/url?url=https%3A%2F%2Fyoutu.be%2FGXXbvUxqgdE)](https://youtu.be/GXXbvUxqgdE)
+
+*Watch the full explanation of how ToolsFilter works and its impact on LLM performance*
+
+## Table of Contents
+
+- [🎥 Explainer Video](#-explainer-video)
+- [Why?](#why)
+  - [The Tool Overload Problem](#the-tool-overload-problem)
+  - [Research Evidence](#-research-evidence)
+  - [Visual Evidence](#-visual-evidence)
+- [Solution](#solution)
+  - [Core Capabilities](#core-capabilities)
+  - [Infrastructure & Performance](#infrastructure--performance)
+  - [Real-World Impact](#real-world-impact)
+- [Architecture](#architecture)
+  - [Search Pipeline Architecture](#search-pipeline-architecture)
+  - [Search Strategies](#search-strategies)
+- [Performance](#performance)
+  - [Latest Evaluation Results](#latest-evaluation-results-august-2025)
+  - [LTR Model Performance](#ltr-model-performance)
+  - [Optimization Roadmap](#optimization-roadmap)
+- [Quick Start](#quick-start)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Running the Services](#running-the-services)
+  - [API Documentation](#api-documentation)
+- [Usage Example](#usage-example)
+- [API Endpoints](#api-endpoints)
+  - [Main Endpoints](#main-endpoints)
+  - [Response Format](#response-format)
+- [Development](#development)
+  - [Running Tests & Evaluation](#running-tests--evaluation)
+  - [Latest Evaluation Reports](#latest-evaluation-reports)
+  - [Code Quality](#code-quality)
+  - [Performance Testing](#performance-testing)
+- [Configuration](#configuration)
+  - [Vector Store Collections](#vector-store-collections)
+  - [Automatic Fallback Mechanism](#automatic-fallback-mechanism)
+- [Documentation](#documentation)
+- [References](#references)
+- [License](#license)
+
 ## Why?
 
 ### The Tool Overload Problem
@@ -44,6 +89,89 @@ Instead of overwhelming your LLM with 100+ tools, get precisely the 3-5 most rel
 - **Before**: 236× token overhead, 9.5% accuracy loss
 - **After**: 95%+ precision, perfect recall on relevant tools, minimal token usage
 
+## Architecture
+
+### Search Pipeline Architecture
+
+```
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│   FastAPI App   │────▶│  Message Parser  │────▶│ Search Pipeline │
+└────────┬────────┘     └──────────────────┘     └─────────┬───────┘
+         │                                                  │
+         │                    ┌─────────────────────────────┼─────────┐
+         │                    │                  │          │         │
+┌────────▼────────┐    ┌──────▼─────┐  ┌─────────▼────────┐ │ ┌───────▼──────┐
+│  Redis Cache    │    │ Embedding  │  │   Qdrant Vector  │ │ │ LTR Reranker │
+│                 │    │ Service    │  │     Database     │ │ │  (XGBoost)   │
+│ • Query Cache   │    │ (LiteLLM)  │  │                  │ │ │              │
+│ • Results Cache │    │ • Voyage   │  │ • Semantic Search│ │ │ • 46 Features│
+│ • Tool Index    │    │ • OpenAI   │  │ • BM25 Hybrid    │ │ │ • NDCG@10 Opt│
+└─────────────────┘    │ • Fallback │  │ • Cross-Encoder  │ │ │              │
+                       └────────────┘  └──────────────────┘ │ └──────────────┘
+                                                            │
+                                    ┌───────────────────────┘
+                                    │
+                             ┌──────▼──────┐
+                             │ Multi-Stage │
+                             │  Filtering  │
+                             │             │
+                             │ 1. Semantic │
+                             │ 2. BM25     │
+                             │ 3. Rerank   │
+                             │ 4. LTR      │
+                             └─────────────┘
+```
+
+### Search Strategies
+
+1. **semantic_only**: Pure vector similarity search
+2. **hybrid_basic**: BM25 + semantic search combination
+3. **hybrid_cross_encoder**: + Cross-encoder reranking
+4. **hybrid_ltr_full**: + Learning-to-Rank optimization
+
+## Performance
+
+### Latest Evaluation Results (August 2025)
+
+**Search Strategy Comparison**: (With 300+ noise (Genuine APIs) tools to resemble real-world)
+
+| Strategy | F1 Score | MRR | P@1 | NDCG@10 | Best For |
+|----------|----------|-----|-----|---------|----------|
+| **hybrid_basic** | **0.359** ⭐ | 1.000 | 1.000 | **0.975** ⭐ | General-purpose, balanced performance |
+| semantic_only | 0.328 | **1.000** ⭐ | **1.000** ⭐ | 0.870 | Simple queries, exact matches |
+| hybrid_cross_encoder | 0.359 | 1.000 | 1.000 | 0.964 | Complex queries requiring reranking |
+| hybrid_ltr_full | 0.359 | 1.000 | 1.000 | 0.942 | Learning-based optimization |
+
+⭐ = Best performer for that metric
+
+📊 **[View Detailed Report](saved_eval_reports/comparison_20250823_153715.html)**
+
+**Key Achievements**:
+- **Perfect Precision@1**: All strategies achieve 1.000 P@1
+- **Perfect MRR**: All strategies achieve 1.000 Mean Reciprocal Rank
+- **Strong NDCG Performance**: Up to 0.975 NDCG@10 with hybrid_basic
+- **Consistent F1 Scores**: 0.328-0.359 across different approaches
+
+### LTR Model Performance
+
+**Learning-to-Rank Training Results**:
+- **Cross-Validation NDCG@10**: 0.9167 ± 0.0567
+- **Training Data**: 18,354 samples with 46 features
+- **Top Features**: action_alignment (32.7%), query_type_analyze (33.9%), exact_name_match (19.5%)
+- **Training Speed**: <5 seconds with XGBoost
+
+### Optimization Roadmap
+
+✅ **Completed**:
+1. ~~Pre-index all tools on startup~~ - Implemented vector store caching
+2. ~~Implement connection pooling~~ - Added Redis and Qdrant connection pooling
+3. ~~Add batch embedding generation~~ - Optimized embedding pipeline
+4. ~~Optimize vector search parameters~~ - Tuned similarity thresholds
+
+🎯 **In Progress**:
+1. Improve LTR model with better class balancing
+2. Enhance feature engineering for interaction signals
+3. Optimize NDCG@5 performance for top-precision use cases
 
 ## Quick Start
 
@@ -223,89 +351,6 @@ print(response.json())
 }
 ```
 
-## Performance
-
-### Latest Evaluation Results (August 2025)
-
-**Search Strategy Comparison**: (With 300+ noise (Genuine APIs) tools to resemble real-world)
-
-| Strategy | F1 Score | MRR | P@1 | NDCG@10 | Best For |
-|----------|----------|-----|-----|---------|----------|
-| **hybrid_basic** | **0.359** ⭐ | 1.000 | 1.000 | **0.975** ⭐ | General-purpose, balanced performance |
-| semantic_only | 0.328 | **1.000** ⭐ | **1.000** ⭐ | 0.870 | Simple queries, exact matches |
-| hybrid_cross_encoder | 0.359 | 1.000 | 1.000 | 0.964 | Complex queries requiring reranking |
-| hybrid_ltr_full | 0.359 | 1.000 | 1.000 | 0.942 | Learning-based optimization |
-
-⭐ = Best performer for that metric
-
-📊 **[View Detailed Report](saved_eval_reports/comparison_20250823_153715.html)**
-
-**Key Achievements**:
-- **Perfect Precision@1**: All strategies achieve 1.000 P@1
-- **Perfect MRR**: All strategies achieve 1.000 Mean Reciprocal Rank
-- **Strong NDCG Performance**: Up to 0.975 NDCG@10 with hybrid_basic
-- **Consistent F1 Scores**: 0.328-0.359 across different approaches
-
-### LTR Model Performance
-
-**Learning-to-Rank Training Results**:
-- **Cross-Validation NDCG@10**: 0.9167 ± 0.0567
-- **Training Data**: 18,354 samples with 46 features
-- **Top Features**: action_alignment (32.7%), query_type_analyze (33.9%), exact_name_match (19.5%)
-- **Training Speed**: <5 seconds with XGBoost
-
-### Optimization Roadmap
-
-✅ **Completed**:
-1. ~~Pre-index all tools on startup~~ - Implemented vector store caching
-2. ~~Implement connection pooling~~ - Added Redis and Qdrant connection pooling
-3. ~~Add batch embedding generation~~ - Optimized embedding pipeline
-4. ~~Optimize vector search parameters~~ - Tuned similarity thresholds
-
-🎯 **In Progress**:
-1. Improve LTR model with better class balancing
-2. Enhance feature engineering for interaction signals
-3. Optimize NDCG@5 performance for top-precision use cases
-
-## Architecture
-
-### Search Pipeline Architecture
-
-```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│   FastAPI App   │────▶│  Message Parser  │────▶│ Search Pipeline │
-└────────┬────────┘     └──────────────────┘     └─────────┬───────┘
-         │                                                  │
-         │                    ┌─────────────────────────────┼─────────┐
-         │                    │                  │          │         │
-┌────────▼────────┐    ┌──────▼─────┐  ┌─────────▼────────┐ │ ┌───────▼──────┐
-│  Redis Cache    │    │ Embedding  │  │   Qdrant Vector  │ │ │ LTR Reranker │
-│                 │    │ Service    │  │     Database     │ │ │  (XGBoost)   │
-│ • Query Cache   │    │ (LiteLLM)  │  │                  │ │ │              │
-│ • Results Cache │    │ • Voyage   │  │ • Semantic Search│ │ │ • 46 Features│
-│ • Tool Index    │    │ • OpenAI   │  │ • BM25 Hybrid    │ │ │ • NDCG@10 Opt│
-└─────────────────┘    │ • Fallback │  │ • Cross-Encoder  │ │ │              │
-                       └────────────┘  └──────────────────┘ │ └──────────────┘
-                                                            │
-                                    ┌───────────────────────┘
-                                    │
-                             ┌──────▼──────┐
-                             │ Multi-Stage │
-                             │  Filtering  │
-                             │             │
-                             │ 1. Semantic │
-                             │ 2. BM25     │
-                             │ 3. Rerank   │
-                             │ 4. LTR      │
-                             └─────────────┘
-```
-
-### Search Strategies
-
-1. **semantic_only**: Pure vector similarity search
-2. **hybrid_basic**: BM25 + semantic search combination
-3. **hybrid_cross_encoder**: + Cross-encoder reranking
-4. **hybrid_ltr_full**: + Learning-to-Rank optimization
 
 ## Development
 
